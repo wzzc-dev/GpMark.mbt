@@ -1,0 +1,3 @@
+[submodule "third_party/gpui-moonbit"]
+	path = third_party/gpui-moonbit
+	url = https://github.com/nakake/gpui-moonbit

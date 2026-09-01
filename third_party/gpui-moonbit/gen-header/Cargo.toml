@@ -1,7 +1,0 @@
-[package]
-name = "gen-header"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-cbindgen = "0.28"

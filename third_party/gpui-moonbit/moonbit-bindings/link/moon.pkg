@@ -1,2 +1,0 @@
-// Intentionally empty. This package exists only as the LinkConfig target
-// for the prebuild script (build.py). See link.mbt for details.

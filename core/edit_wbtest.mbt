@@ -273,3 +273,89 @@ fn marks_of(n : Inline) -> Marks {
     _ => Marks::default()
   }
 }
+
+///|
+test "BlockOp：列表转段落保住全部项；类型互转" {
+  let doc = parse_doc("- 甲\n- 乙\n- 丙\n")
+  let (b1, _) = doc_block_op(doc, csel(1, 0), ToggleBullet)
+  assert_eq(
+    b1.map(block_plain),
+    ["甲", "乙", "丙"],
+  )
+  let (b2, _) = doc_block_op(b1, csel(0, 0), ToggleBullet)
+  match b2[0] {
+    ListBlock(Bullet, its) => assert_eq(its.length(), 1) // 只包光标所在段
+    _ => fail("bullet")
+  }
+  assert_eq(b2.map(block_plain).length(), 3) // 其余段不丢
+  let (b3, _) = doc_block_op(b2, csel(0, 0), SetOrdered(1))
+  match b3[0] {
+    ListBlock(Ordered(1), its) => assert_eq(its.length(), 1) // 换类型：整表换装
+    _ => fail("ordered")
+  }
+  // 多项列表换类型全部保留
+  let many = parse_doc("- 甲\n- 乙\n")
+  let (m2, _) = doc_block_op(many, csel(0, 0), SetOrdered(1))
+  match m2[0] {
+    ListBlock(Ordered(1), its) => assert_eq(its.length(), 2)
+    _ => fail("ordered many")
+  }
+  let (b4, _) = doc_block_op(b3, csel(0, 0), SetTask)
+  match b4[0] {
+    ListBlock(Task, its) => assert_eq(its[0].checked, Some(false))
+    _ => fail("task")
+  }
+  // 段落 → 标题 → 同键回到段落
+  let p = parse_doc("text\n")
+  let (h, _) = doc_block_op(p, csel(0, 0), SetHeading(2))
+  assert_eq(h[0], Heading(2, [Run("text", Marks::default())]))
+  let (p2, _) = doc_block_op(h, csel(0, 0), SetHeading(2))
+  match p2[0] {
+    Paragraph(_) => ()
+    _ => fail("back to paragraph")
+  }
+}
+
+///|
+test "表格格首退格/格尾前删只移光标（防幽灵格）" {
+  let doc = parse_doc("| a | b |\n| - | - |\n| 1 | 2 |\n")
+  // 单元 2 = 第 2 行首格（offset 0）
+  let (b1, s1) = doc_backspace(doc, csel(2, 0))
+  assert_eq(b1, doc) // 内容不动
+  assert_eq(s1, csel(1, 1)) // 光标移入上一格尾
+  // 格尾前删 → 下一格首
+  let (b2, s2) = doc_delete_forward(doc, Caret::{ unit: 0, offset: 1 })
+  assert_eq(b2, doc)
+  assert_eq(s2, csel(1, 0))
+  // 普通段落跨块退格仍合并
+  let p = parse_doc("one\n\ntwo\n")
+  let (b3, _) = doc_backspace(p, csel(1, 0))
+  assert_true(b3 != p)
+}
+
+///|
+test "代码块语言循环" {
+  let langs = ["", "moonbit", "rust"]
+  let doc = parse_doc("```rust\nx\n```")
+  let us = collect_units(doc)
+  let mut cu = -1
+  for k = 0; k < us.length(); k = k + 1 {
+    if us[k].kind == CodeU {
+      cu = k
+    }
+  }
+  // rust → 回到表头（空）→ moonbit
+  let (b1, _) = doc_cycle_code_lang(doc, csel(cu, 0), langs)
+  match b1[0] {
+    CodeBlock(l, code) => {
+      assert_eq(l, "")
+      assert_eq(code, "x") // 代码内容不动
+    }
+    _ => fail("code")
+  }
+  let (b2, _) = doc_cycle_code_lang(b1, csel(cu, 0), langs)
+  match b2[0] {
+    CodeBlock(l, _) => assert_eq(l, "moonbit")
+    _ => fail("code2")
+  }
+}

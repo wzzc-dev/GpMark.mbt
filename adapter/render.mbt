@@ -1,9 +1,11 @@
 /// GPUI 适配层（渲染侧）：块树 → gpui 命令缓冲。
 ///
-/// 策略：每个顶层块渲染成一个可点击 div；块内文本用 `rich_text`（多 run
-/// 样式）渲染；光标（▍）通过把 run 在光标偏移处切开插入高亮段实现；选区
-/// 用背景色高亮。框架的 click 事件不带坐标（见 docs/framework-gaps.md），
-/// 因此点击块 = 聚焦该块并把光标放到块尾。
+/// 策略：每个「编辑单元」渲染成一个可点击 div（段落/标题行/列表项/表格
+/// 格/代码块整体…）；任务项的 ☑/☐ 标记是独立点击区域（勾选切换）。
+/// 块内文本用 `rich_text`（多 run 样式）渲染；光标（▍）通过把 run 在光标
+/// 偏移处切开插入高亮段实现；选区用背景色高亮。框架的 click 事件不带坐标
+/// （见 docs/framework-gaps.md），因此点击单元 = 光标落到该单元尾部——
+/// 「点哪到哪」在约束内的最大逼近。
 ///
 /// 本文件不做任何 FFI 调用（只写 CommandBuffer 字节），因此可以被
 /// `moon test` 通过 `to_bytes` 直接验证。
@@ -225,32 +227,50 @@ fn push_rich(
 
 ///|
 /// 把整个文档渲染进命令缓冲（不含根 div；调用方已 push 根）。
-pub fn render_doc(cb : @gpui.CommandBuffer, blocks : Array[@core.Block], sel : @core.Sel) -> Unit {
-  let units = @core.collect_units(blocks)
-  let _ = units
+pub fn render_doc(
+  cb : @gpui.CommandBuffer,
+  blocks : Array[@core.Block],
+  sel : @core.Sel,
+  reg : (Int) -> Int,
+  rbox : (Int) -> Int,
+) -> Unit {
   let sel_a = @core.sel_start(sel)
   let sel_b = @core.sel_end(sel)
   let mut cur = 0
   for i = 0; i < blocks.length(); i = i + 1 {
-    render_slot(cb, blocks[i], cur, sel_a, sel_b)
+    render_slot(cb, blocks[i], cur, sel_a, sel_b, reg, rbox)
     cur = cur + count_units_of(blocks[i])
   }
 }
 
-// 一个顶层块 = 一个可点击槽
+// 叶子块 = 单元点击区；容器块（引用/列表/表格）由 render_block 给内部
+// 每个单元自带点击区，外层 div 不响应点击。
 fn render_slot(
   cb : @gpui.CommandBuffer,
   b : @core.Block,
   cur : Int,
   sel_a : @core.Caret,
   sel_b : @core.Caret,
+  reg : (Int) -> Int,
+  rbox : (Int) -> Int,
 ) -> Unit {
+  let container = match b {
+    @core.Quote(_) | @core.ListBlock(_, _) | @core.TableBlock(_) => true
+    _ => false
+  }
   cb.div()
-  cb.set_cursor(@gpui.CURSOR_TEXT)
-  cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-  cb.set_padding_sides(2, 6, 2, 6)
-  render_block(cb, b, cur, sel_a, sel_b)
+  if !container {
+    cb.set_cursor(@gpui.CURSOR_TEXT)
+    cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
+    cb.set_padding_sides(2, 6, 2, 6)
+    cb.set_on_click(reg(cur))
+  }
+  render_block(cb, b, cur, sel_a, sel_b, reg, rbox)
   cb.add_child()
+}
+
+fn header_bold(segs : Array[Seg]) -> Array[Seg] {
+  segs.map(sg => (sg.0, merge_style(sg.1, Some(@gpui.RunStyle::new(weight=700)))))
 }
 
 fn render_block(
@@ -259,7 +279,10 @@ fn render_block(
   cur : Int,
   sel_a : @core.Caret,
   sel_b : @core.Caret,
+  reg : (Int) -> Int,
+  rbox : (Int) -> Int,
 ) -> Unit {
+  // 叶子块的单元就是 cur；容器块（列表/表格）内每个单元各自重算窗口
   let (caret, lo, hi) = unit_sel_window(sel_a, sel_b, cur)
   match b {
     @core.Heading(l, inls) => {
@@ -272,7 +295,13 @@ fn render_block(
       15.0,
       false,
     )
-    @core.CodeBlock(_, code) => render_code(cb, code, caret, lo, hi)
+    @core.CodeBlock(lang, code) => {
+      if lang != "" {
+        cb.text(lang, col_muted.0, col_muted.1, col_muted.2, 11.0)
+        cb.add_child()
+      }
+      render_code(cb, code, caret, lo, hi)
+    }
     @core.Quote(inner) => {
       cb.set_bg_color(@gpui.Color::rgb(36, 39, 48))
       cb.set_border_color(2.0, @gpui.Color::rgb(80, 90, 110))
@@ -282,10 +311,7 @@ fn render_block(
       cb.set_gap(4.0)
       let mut c2 = cur
       for ib in inner {
-        cb.div()
-        cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-        render_block(cb, ib, c2, sel_a, sel_b)
-        cb.add_child()
+        render_slot(cb, ib, c2, sel_a, sel_b, reg, rbox)
         c2 = c2 + count_units_of(ib)
       }
     }
@@ -307,12 +333,26 @@ fn render_block(
               _ => "☐"
             }
         }
-        cb.text(marker, col_mark.0, col_mark.1, col_mark.2, 15.0)
-        cb.add_child()
+        if kind == @core.Task {
+          // 任务框：独立点击区 → 勾选切换
+          cb.div()
+          cb.set_cursor(@gpui.CURSOR_POINTER)
+          cb.set_padding_sides(0, 4, 0, 2)
+          cb.set_on_click(rbox(c2))
+          cb.text(marker, col_mark.0, col_mark.1, col_mark.2, 15.0)
+          cb.add_child()
+          cb.add_child()
+        } else {
+          cb.text(marker, col_mark.0, col_mark.1, col_mark.2, 15.0)
+          cb.add_child()
+        }
         cb.div()
         cb.set_flex(1.0, 1.0, 0.0)
+        cb.set_cursor(@gpui.CURSOR_TEXT)
         cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-        push_rich(cb, inline_segments(it.content, caret, lo, hi), 15.0, false)
+        cb.set_on_click(reg(c2))
+        let (ic, ilo, ihi) = unit_sel_window(sel_a, sel_b, c2)
+        push_rich(cb, inline_segments(it.content, ic, ilo, ihi), 15.0, false)
         cb.add_child()
         cb.add_child() // row
         if it.children.length() > 0 {
@@ -322,10 +362,7 @@ fn render_block(
           cb.set_gap(2.0)
           c2 = c2 + 1
           for ch in it.children {
-            cb.div()
-            cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-            render_block(cb, ch, c2, sel_a, sel_b)
-            cb.add_child()
+            render_slot(cb, ch, c2, sel_a, sel_b, reg, rbox)
             c2 = c2 + count_units_of(ch)
           }
           cb.add_child()
@@ -338,19 +375,30 @@ fn render_block(
     @core.TableBlock(t) => {
       cb.set_flex_col()
       let mut c2 = cur
+      let mut ri = 0
       for row in t.rows {
         cb.div()
         cb.set_flex_row()
         for cell in row {
           cb.div()
+          cb.set_cursor(@gpui.CURSOR_TEXT)
           cb.set_border_color(1.0, @gpui.Color::rgb(70, 76, 92))
           cb.set_padding_sides(4, 10, 4, 10)
           cb.set_min_size(60, 0)
-          push_rich(cb, inline_segments(cell, caret, lo, hi), 14.0, false)
+          cb.set_on_click(reg(c2))
+          let (cc, clo, chi) = unit_sel_window(sel_a, sel_b, c2)
+          let segs = inline_segments(cell, cc, clo, chi)
+          push_rich(
+            cb,
+            if t.has_header && ri == 0 { header_bold(segs) } else { segs },
+            14.0,
+            false,
+          )
           cb.add_child()
           c2 = c2 + 1
         }
         cb.add_child()
+        ri = ri + 1
       }
     }
     @core.ImageBlock(alt, url) => {

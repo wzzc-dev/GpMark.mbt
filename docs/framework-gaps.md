@@ -9,8 +9,12 @@ adapter/core 侧采取的绕行方案。按发现顺序记录。
 `EVENT_CLICK` 信封只有 `handler_id`（`data_a`），没有鼠标位置。
 
 - **影响**：无法把点击映射到块内的字符偏移（无法“点哪停哪”）。
-- **绕行**：点击块 = 聚焦该块并把光标放到**块尾**
-  （`adapter/app.mbt:on_block_click`）。这是本编辑器唯一的定点方式。
+- **绕行**：点击 = 聚焦该**编辑单元**并把光标放到单元尾
+  （`adapter/app.mbt:on_unit_click`）。已把可点击区域从“顶层块”细化到
+  “编辑单元”（段落/标题行/列表项/任务项/表格格/代码块各为一个单元），
+  任务框 ☑/☐ 另设独立点击区（`on_box_click`→勾选切换）。handler id 池
+  按需增长（历史固定 128 槽会越界全部指向末块）。这是无坐标约束下
+  “点哪到哪”的最大逼近。
 
 ## 2. 无内联文本编辑控件可用（编辑器模式）
 
@@ -33,9 +37,11 @@ Enter/Backspace 自定义拦截（widget 会吞掉这些键，见 lib.rs
 `EVENT_TEXT` 信封不带 mods，接收端无法自判。
 
 - **实测证据**：未处理时按 Cmd+Z 撤销后，字符 `z` 又被插入文档。
-- **绕行**：`adapter` 里处理任何带 Platform/Ctrl/Alt 的 keydown 时置
-  `swallow_text` 标志，吞掉紧随其后的那一条 text 事件
-  （`adapter/app.mbt:on_key/on_text`）。
+- **绕行**：`adapter` 采用**代际计数**（`key_gen`/`swallow_gen`）而非一次性
+  布尔标志——每次 keydown 递增 `key_gen`，带 Platform/Ctrl/Alt 的 keydown
+  记下 `swallow_gen=key_gen`；`on_text` 仅当 `swallow_gen==key_gen` 时吞掉
+  该条 text 事件（`adapter/app.mbt:on_key/on_text`）。一次性布尔标志曾会
+  误吞后续普通键入，代际计数保证“只吞当次快捷键补发的那一条”。
 
 ## 4. 无文本换行度量接口
 
@@ -63,7 +69,23 @@ Enter/Backspace 自定义拦截（widget 会吞掉这些键，见 lib.rs
 `register_dispatch` 只有一个 C 回调；未提供 mouse-move/drag/context-menu。
 - **影响**：无法用鼠标拖拽选区、右键菜单。选区只能靠 Shift+方向键。
 
-## 8. run_window 前 build_tree 是合法的（澄清）
+## 8. Tab 键被焦点遍历吃掉，无法送达 MoonBit
+
+`gpui-sys/src/lib.rs` 的 `focused_input_or` 分支（约 2863-2877 行）在按键
+为 Tab 时直接执行 GPUI 的 focus traversal 并 `return true`，**不转发**给
+注册回调。因此编辑器永远收不到 Tab。
+
+- **影响**：无法用 Tab 做列表缩进/代码块内制表。
+- **绕行**：缩进/反缩进改用 `Cmd+]` / `Cmd+[`
+  （`core::doc_indent` / `doc_outdent`），并在 README 注明键位。
+
+## 9. 无内联图片渲染 opcode
+
+命令缓冲没有 image 节点类型（只有 div/text/rich_text 及样式 op）。
+- **绕行**：`ImageBlock` 渲染为 `⛁ alt · url` 文本占位，编辑时按原子块
+  整体退格/前删。图片二进制渲染超出本期范围。
+
+## 10. run_window 前 build_tree 是合法的（澄清）
 
 `gpui_build_tree` 只解码命令缓冲并写入 `VIEWS[view]`（越界自动
 resize），**不需要**窗口/App 上下文；`run_window` 仅打开窗口渲染

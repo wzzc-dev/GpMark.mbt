@@ -151,6 +151,174 @@ fn main {
     println("BAD: blocks after undo = \{ed.blocks.length()}")
     failed.push(1)
   }
+  // --- 点列表项文本单元：光标落该单元尾，且全树仍只有一个光标 ---
+  {
+    let u0 = @core.collect_units(ed.blocks)
+    let mut item_u = -1
+    for k = 0; k < u0.length(); k = k + 1 {
+      if u0[k].plain == "已完成任务" {
+        item_u = k
+      }
+    }
+    if item_u < 0 {
+      println("BAD: task text unit not found")
+      failed.push(1)
+    } else {
+      let _ = @mdmbt/editor/adapter.dispatch(
+        @nakake/gpui-bindings.ABI_VERSION,
+        @nakake/gpui-bindings.EVENT_CLICK,
+        0,
+        @mdmbt/editor/adapter.click_id_of(item_u),
+        0,
+      )
+      let d = match @nakake/gpui-bindings.debug_dump_text(0) {
+        Ok(t) => t
+        Err(_) => ""
+      }
+      if d.contains("已完成任务▍") && d.to_array().filter(c => c == '▍').length() == 1 {
+        println("  ok: list-item click caret unique")
+      } else {
+        println("BAD: list-item click caret wrong/duplicated")
+        failed.push(1)
+      }
+    }
+  }
+  // --- 任务框点击：勾选切换（box id 池独立于单元 id 池）---------------
+  let units_now = @core.collect_units(ed.blocks)
+  let mut task_u = -1
+  for k = 0; k < units_now.length(); k = k + 1 {
+    if units_now[k].plain.contains("已完成任务") {
+      task_u = k
+    }
+  }
+  if task_u < 0 {
+    println("BAD: task unit not found")
+    failed.push(1)
+  } else {
+    let before = @mdmbt/editor/adapter.dump()
+    let _ = @mdmbt/editor/adapter.dispatch(
+      @nakake/gpui-bindings.ABI_VERSION,
+      @nakake/gpui-bindings.EVENT_CLICK,
+      0,
+      @mdmbt/editor/adapter.box_id_of(task_u),
+      0,
+    )
+    if @mdmbt/editor/adapter.dump().contains("- [ ] 已完成任务") {
+      println("  ok: checkbox click toggled task")
+    } else {
+      println("BAD: checkbox click did not toggle (before=\{before})")
+      failed.push(1)
+    }
+    ed.undo()
+    if !@mdmbt/editor/adapter.dump().contains("- [ ] 已完成任务") {
+      println("  ok: undo restored checkbox")
+    } else {
+      println("BAD: undo did not restore checkbox")
+      failed.push(1)
+    }
+  }
+  // --- 「标记+空格」规则：键入序列走 core（TEXT 事件无坐标不能注入）---
+  let p_u = @core.collect_units(ed.blocks)
+  let mut para_u = -1
+  for k = 0; k < p_u.length(); k = k + 1 {
+    if p_u[k].kind == @core.ParagraphU {
+      para_u = k
+      break
+    }
+  }
+  if para_u < 0 {
+    println("BAD: no paragraph unit")
+    failed.push(1)
+  } else {
+    ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit: para_u, offset: 0 }))
+    ed.apply_text("selftest", fn(b, s) {
+      // 模拟逐键：先敲 "# "（触发规则），再敲标题文本
+      let (b1, s1) = @core.doc_insert(b, s, "# ")
+      let (b2, s2, hit) = @core.doc_apply_space_rule(b1, s1)
+      if !hit {
+        println("BAD: space rule did not fire")
+        failed.push(1)
+      }
+      @core.doc_insert(b2, s2, "规则标题")
+    })
+    if @mdmbt/editor/adapter.dump().contains("# 规则标题") {
+      println("  ok: space rule produced heading")
+    } else {
+      println("BAD: serialize missing '# 规则标题'")
+      failed.push(1)
+    }
+    ed.undo()
+  }
+  // --- 活行内转换：键入 `**x**` 后空格 → bold run -----------------------
+  if para_u >= 0 {
+    ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit: para_u, offset: 0 }))
+    ed.apply_text("selftest2", fn(b, s) {
+      let (b1, s1) = @core.doc_insert(b, s, "**粗**x")
+      let us = @core.collect_units(b1)
+      let c = s1.focus
+      let (ni, no, changed) = @core.reparse_inlines(us[c.unit].inlines, c.offset)
+      if !changed {
+        println("BAD: reparse did not change")
+        failed.push(1)
+      }
+      ((us[c.unit].set_inlines)(ni), @core.collapsed_sel(@core.Caret::{
+        unit: c.unit,
+        offset: no,
+      }))
+    })
+    @nakake/gpui-bindings.expect_ok(
+      @mdmbt/editor/adapter.build_tree(0),
+      "rebuild after reparse",
+    )
+    let rdump = match @nakake/gpui-bindings.debug_dump_text(0) {
+      Ok(t) => t
+      Err(_) => ""
+    }
+    if rdump.contains("**") {
+      println("BAD: rendered text should not show literal markers")
+      failed.push(1)
+    } else if rdump.contains("粗x") {
+      println("  ok: live inline reparse consumed markers")
+    } else {
+      println("BAD: rendered text missing 粗x")
+      failed.push(1)
+    }
+    ed.undo()
+  }
+  // --- Cmd+A + Cmd+B：选区加粗走真实 on_key 事件 ------------------------
+  let _ = @mdmbt/editor/adapter.dispatch(
+    @nakake/gpui-bindings.ABI_VERSION,
+    @nakake/gpui-bindings.EVENT_KEY,
+    0,
+    'a'.to_int(),
+    @nakake/gpui-bindings.MOD_PLATFORM,
+  )
+  let _ = @mdmbt/editor/adapter.dispatch(
+    @nakake/gpui-bindings.ABI_VERSION,
+    @nakake/gpui-bindings.EVENT_KEY,
+    0,
+    'b'.to_int(),
+    @nakake/gpui-bindings.MOD_PLATFORM,
+  )
+  if @mdmbt/editor/adapter.dump().contains("**md_mbt 编辑器演示**") {
+    println("  ok: Cmd+A + Cmd+B bolded whole doc")
+  } else {
+    println("BAD: Cmd+B did not bold selection")
+    failed.push(1)
+  }
+  let _ = @mdmbt/editor/adapter.dispatch(
+    @nakake/gpui-bindings.ABI_VERSION,
+    @nakake/gpui-bindings.EVENT_KEY,
+    0,
+    'z'.to_int(),
+    @nakake/gpui-bindings.MOD_PLATFORM,
+  )
+  if !@mdmbt/editor/adapter.dump().contains("**md_mbt 编辑器演示**") {
+    println("  ok: Cmd+Z undid bold")
+  } else {
+    println("BAD: undo did not restore bold state")
+    failed.push(1)
+  }
   if failed.length() > 0 {
     println("---- dump ----")
     println(dump4)

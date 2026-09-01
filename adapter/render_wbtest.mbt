@@ -5,7 +5,7 @@ fn run_render(src : String) -> Unit {
   let cb = @gpui.CommandBuffer::new()
   cb.div()
   cb.set_flex_col()
-  render_doc(cb, bs, @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 }))
+  render_doc(cb, bs, @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 }), fn(u) { u + 1 }, fn(u) { u + 2 })
   cb.set_root()
 }
 
@@ -13,7 +13,7 @@ test "渲染命令缓冲含合法 GPUI 头" {
   let bs = @core.parse_doc("# H\n\ntext\n")
   let cb = @gpui.CommandBuffer::new()
   cb.div()
-  render_doc(cb, bs, @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 1 }))
+  render_doc(cb, bs, @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 1 }), fn(u) { u + 1 }, fn(u) { u + 2 })
   let bytes = cb.to_bytes()
   assert_true(bytes.length() > 8)
   assert_true(bytes[0] == b'G')

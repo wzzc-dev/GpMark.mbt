@@ -37,15 +37,14 @@ pub fn demo_sample() -> String {
   "# md_mbt 编辑器演示\n" + "\n这是 **GPUI 后端** 的 MoonBit *Markdown* WYSIWYG 核心。\n" + "直接键入编辑，Cmd+Z 撤销，点击任意块聚焦（光标落到块尾）。\n" + "\n## 列表与任务\n" + "- 无序项 alpha\n" + "  - 嵌套子项\n" + "1. 有序一\n" + "2. 有序二\n" + "- [x] 已完成任务\n" + "- [ ] 待办任务\n" + "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.dev) 都在同一段里。\n" + "\n```moonbit\nfn greet(name : String) -> String {\n  \"hello \" + name\n}\n```\n" + "\n## 表格\n" + "| 层 | 角色 | 说明 |\n" + "| --- | --- | --- |\n" + "| core | 纯逻辑 | 块树 / 解析 / 编辑 / undo，零 FFI |\n" + "| adapter | 适配 | 块树 → gpui 节点树 + 事件回灌 |\n" + "| main | 装配 | 链接 Rust staticlib，进入事件循环 |\n" + "\n![moon](moon.png)\n" + "\n---\n" + "\n<div class=\"raw-block\">不在稳定子集的语法保留为原样块，导出时零损失。</div>\n"
 }
 
-// --- 点击聚焦 ---------------------------------------------------------------
-// click 事件不带坐标（framework gap）：点击 = 聚焦该块、光标移到块尾。
-// 每个渲染槽复用一个固定 click id，重渲染时更新「槽 → 顶层块下标」映射。
-
-const CLICK_POOL : Int = 128
-
-// 注意：MoonBit 顶层 let 只在被引用时求值——初始化必须内联在初始化器里，
-// 不能用「副作用型 _init let」（那种从未被引用的 let 根本不会执行）。
-let click_slot : Array[Int] = Array::make(CLICK_POOL, 0)
+// --- 逐编辑单元点击 ---------------------------------------------------------
+// click 事件不带坐标（framework gap）：点击单元 = 光标落到该单元尾；
+// 任务 ☑/☐ 标记独立点击区 = 勾选切换。handler id 池按需增长（历史遗留的
+// 固定 128 槽会越界全部指向末块）。id 按单元下标注册一次永久复用：闭包捕获
+// 的是单元下标，点击时读「当前」单元数组，编辑导致的内容位移天然正确。
+// 注意：MoonBit 顶层 let 只在被引用时求值——初始化必须内联在初始化器里。
+let unit_ids : Array[@gpui.HandlerId] = []
+let box_ids : Array[@gpui.HandlerId] = []
 
 let handlers : @gpui.HandlerRegistry = {
   let r = @gpui.HandlerRegistry::new()
@@ -55,41 +54,60 @@ let handlers : @gpui.HandlerRegistry = {
   r
 }
 
-let click_ids : Array[@gpui.HandlerId] = {
-  let ids : Array[@gpui.HandlerId] = []
-  for k in 0..<CLICK_POOL {
-    ids.push(handlers.on_click(fn(_view) { on_block_click(k) }))
+fn reg_unit(unit : Int) -> Int {
+  while unit_ids.length() <= unit {
+    let k = unit_ids.length()
+    unit_ids.push(handlers.on_click(fn(_view) { on_unit_click(k) }))
   }
-  ids
+  unit_ids[unit].to_int()
+}
+
+fn reg_box(unit : Int) -> Int {
+  while box_ids.length() <= unit {
+    let k = box_ids.length()
+    box_ids.push(handlers.on_click(fn(_view) { on_box_click(k) }))
+  }
+  box_ids[unit].to_int()
 }
 
 ///|
-/// 渲染槽 `slot` 写入命令缓冲的实际 click handler id（自检/测试注入事件用）。
-pub fn click_id_of(slot : Int) -> Int {
-  if slot >= 0 && slot < click_ids.length() {
-    click_ids[slot].to_int()
-  } else {
+/// 单元 `unit` 的实际 click handler id（自检/测试注入事件用）。
+pub fn click_id_of(unit : Int) -> Int {
+  if unit < 0 {
     -1
+  } else {
+    reg_unit(unit)
   }
 }
 
-fn on_block_click(slot : Int) -> Unit {
-  if slot >= click_slot.length() {
-    return
+///|
+/// 单元 `unit` 任务框的 click handler id。
+pub fn box_id_of(unit : Int) -> Int {
+  if unit < 0 {
+    -1
+  } else {
+    reg_box(unit)
   }
-  let top = click_slot[slot]
+}
+
+fn on_unit_click(unit : Int) -> Unit {
   let us = @core.collect_units(ed.blocks)
-  let mut last = -1
-  for i = 0; i < us.length(); i = i + 1 {
-    if us[i].top_index == top {
-      last = i
-    }
-  }
-  if last < 0 {
+  if unit < 0 || unit >= us.length() {
     return
   }
-  let off = us[last].plain.to_array().length()
-  ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit: last, offset: off }))
+  let off = us[unit].plain.to_array().length()
+  ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit, offset: off }))
+  bump()
+}
+
+fn on_box_click(unit : Int) -> Unit {
+  let us = @core.collect_units(ed.blocks)
+  if unit < 0 || unit >= us.length() {
+    return
+  }
+  ed.apply(fn(b, s) {
+    @core.doc_toggle_task(b, @core.collapsed_sel(@core.Caret::{ unit, offset: 0 }))
+  })
   bump()
 }
 
@@ -97,48 +115,156 @@ fn on_block_click(slot : Int) -> Unit {
 
 // 框架缺口（见 docs/framework-gaps.md）：gpui-sys 的 typed_text 不看修饰键，
 // Cmd/Ctrl/Alt 组合键在发 EVENT_KEY 之后还会补发一条 EVENT_TEXT 字符事件。
-// EVENT_TEXT 信封不带 mods，无法自判，所以在处理带修饰键的 keydown 时置标志，
-// 吞掉紧随其后的那一条 text 事件。
-let swallow_text : Array[Bool] = [false]
+// EVENT_TEXT 信封不带 mods，无法自判，采用「代际计数」：每次 keydown 递增
+// key_seq；带修饰键的 keydown 记下 swallow_seq；on_text 只有当 swallow_seq
+// 仍等于当前代际时才吞——任何后续按键都会使过期的吞标志失效，避免一次性
+// 布尔标志误吞普通键入。
+let key_gen : Array[Int] = [0]
+let swallow_gen : Array[Int] = [-1]
+
+fn bump_key_gen(mods : Int) -> Unit {
+  key_gen[0] = key_gen[0] + 1
+  if (mods & (@gpui.MOD_PLATFORM | @gpui.MOD_CTRL | @gpui.MOD_ALT)) != 0 {
+    swallow_gen[0] = key_gen[0]
+  } else {
+    swallow_gen[0] = -1
+  }
+}
 
 fn on_text(t : String) -> Unit {
-  if swallow_text[0] {
-    swallow_text[0] = false
+  if swallow_gen[0] == key_gen[0] {
+    swallow_gen[0] = -1
     return
   }
-  ed.apply(fn(b, s) { @core.doc_insert(b, s, t) })
+  // 多行粘贴拆段 + 「标记+空格」规则 + 活行内转换
+  // （同单元连续键入合并 undo：字面标记变样式与键入本身同一撤销点）
+  let unit = ed.sel.focus.unit.to_string()
+  ed.apply_text("t" + unit, fn(b, s) {
+    let (b2, s2) = @core.doc_paste(b, s, t)
+    let (b3, s3, _) = @core.doc_apply_space_rule(b2, s2)
+    if !@core.reparse_trigger(t) {
+      return (b3, s3)
+    }
+    let us = @core.collect_units(b3)
+    let c = s3.focus
+    if c.unit < 0 || c.unit >= us.length() {
+      return (b3, s3)
+    }
+    let u = us[c.unit]
+    let ed_ =
+      match u.kind {
+        @core.ParagraphU | @core.HeadingU(_) | @core.ListItemU | @core.CellU | @core.QuoteU => true
+        _ => false
+      }
+    if !ed_ {
+      return (b3, s3)
+    }
+    let (ni, no, changed) = @core.reparse_inlines(u.inlines, c.offset)
+    if !changed {
+      return (b3, s3)
+    }
+    (
+      (u.set_inlines)(ni),
+      @core.collapsed_sel(@core.Caret::{ unit: c.unit, offset: no }),
+    )
+  })
+  bump()
+}
+
+let langs : Array[String] = [
+  "", "moonbit", "rust", "python", "javascript", "json", "bash", "text",
+]
+
+fn code_hit(code : Int, c : Char) -> Bool {
+  code == c.to_int()
+}
+
+fn set_mark(self_bold : Bool, it_italic : Bool, st : Bool, cd : Bool) -> Unit {
+  ed.apply(fn(b, s) {
+    @core.doc_toggle_mark(
+      b,
+      s,
+      fn(m) {
+        @core.Marks::{
+          bold: if self_bold { !m.bold } else { m.bold },
+          italic: if it_italic { !m.italic } else { m.italic },
+          strike: if st { !m.strike } else { m.strike },
+          code: if cd { !m.code } else { m.code },
+        }
+      },
+    )
+  })
   bump()
 }
 
 fn on_key(code : Int, mods : Int) -> Unit {
-  if (mods & (@gpui.MOD_PLATFORM | @gpui.MOD_CTRL | @gpui.MOD_ALT)) != 0 {
-    swallow_text[0] = true
-  }
+  bump_key_gen(mods)
   if (mods & @gpui.MOD_PLATFORM) != 0 {
-    if code == 'z'.to_int() || code == 'Z'.to_int() {
+    if code_hit(code, 'z') || code_hit(code, 'Z') {
       if (mods & @gpui.MOD_SHIFT) != 0 {
         ed.redo()
       } else {
         ed.undo()
       }
       bump()
-    } else if code == 'a'.to_int() || code == 'A'.to_int() {
+    } else if code_hit(code, 'a') || code_hit(code, 'A') {
       ed.set_sel(@core.doc_select_all(ed.blocks))
+      bump()
+    } else if code_hit(code, 'b') || code_hit(code, 'B') {
+      set_mark(true, false, false, false)
+    } else if code_hit(code, 'i') || code_hit(code, 'I') {
+      set_mark(false, true, false, false)
+    } else if code_hit(code, 'e') || code_hit(code, 'E') {
+      set_mark(false, false, false, true)
+    } else if (mods & @gpui.MOD_SHIFT) != 0 && (code_hit(code, 'x') || code_hit(code, 'X')) {
+      set_mark(false, false, true, false)
+    } else if code_hit(code, '[') {
+      ed.apply(fn(b, s) { @core.doc_outdent(b, s) })
+      bump()
+    } else if code_hit(code, ']') {
+      ed.apply(fn(b, s) { @core.doc_indent(b, s) })
+      bump()
+    } else if (mods & @gpui.MOD_SHIFT) != 0 && (code_hit(code, 'l') || code_hit(code, 'L')) {
+      ed.apply(fn(b, s) { @core.doc_cycle_code_lang(b, s, langs) })
       bump()
     }
   }
 }
 
 fn on_named_key(id : Int, mods : Int) -> Unit {
+  bump_key_gen(mods)
   let ext = (mods & @gpui.MOD_SHIFT) != 0
-  if id == @gpui.KEY_ENTER {
-    ed.apply(fn(b, s) { @core.doc_enter(b, s) })
+  let cmd = (mods & @gpui.MOD_PLATFORM) != 0
+  let alt = (mods & @gpui.MOD_ALT) != 0
+  if id == @gpui.KEY_ENTER && cmd {
+    // Cmd+Enter：从代码块出逃（velotype 语义）
+    ed.apply(fn(b, s) { @core.doc_code_escape(b, s) })
+    bump()
+  } else if id == @gpui.KEY_ENTER && alt {
+    // Alt+Enter：表格光标行下加一行；非表格无操作
+    ed.apply(fn(b, s) { @core.doc_table_add_row(b, s) })
+    bump()
+  } else if id == @gpui.KEY_ENTER {
+    ed.apply(fn(b, s) {
+      match @core.doc_apply_enter_rules(b, s) {
+        Some(hit) => hit
+        None => {
+          let (nb, ns) = @core.doc_enter(b, s)
+          (@core.doc_ensure_trailing(nb), ns)
+        }
+      }
+    })
     bump()
   } else if id == @gpui.KEY_BACKSPACE {
-    ed.apply(fn(b, s) { @core.doc_backspace(b, s) })
+    let unit = ed.sel.focus.unit.to_string()
+    ed.apply_text("d" + unit, fn(b, s) { @core.doc_backspace(b, s) })
     bump()
   } else if id == @gpui.KEY_DELETE {
     ed.apply(fn(b, s) { @core.doc_delete_forward(b, s.focus) })
+    bump()
+  } else if alt && (id == @gpui.KEY_LEFT || id == @gpui.KEY_RIGHT) {
+    let d = if id == @gpui.KEY_LEFT { @core.Left } else { @core.Right }
+    ed.set_sel(@core.doc_move_word(ed.blocks, ed.sel, d, ext))
     bump()
   } else {
     let dir =
@@ -175,29 +301,20 @@ let ctx : @gpui.RenderCtx = { view: 0, store, handlers }
 /// 全量重建（store dirty 时由框架调度）。
 pub fn rebuild(view : Int) -> Result[Unit, Int] {
   let cb = @gpui.CommandBuffer::new()
-  cb.div() // root
+  cb.div() // root：仅承载底色与滚动容器
+  cb.set_key("root")
   cb.set_bg(28, 30, 38)
+  cb.set_flex_col()
+  cb.div() // 滚动容器：内容超高时鼠标滚轮可滚（框架提供原生滚动）
+  cb.set_key("scroll")
   cb.set_flex_col()
   cb.set_gap(6.0)
   cb.set_padding(28)
-  let blocks = ed.blocks
-  let sel_a = @core.sel_start(ed.sel)
-  let sel_b = @core.sel_end(ed.sel)
-  let mut cur = 0
-  for i = 0; i < blocks.length(); i = i + 1 {
-    let slot = if i < CLICK_POOL { i } else { CLICK_POOL - 1 }
-    if slot < click_slot.length() {
-      click_slot[slot] = i
-    }
-    cb.div()
-    cb.set_cursor(@gpui.CURSOR_TEXT)
-    cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-    cb.set_padding_sides(2, 6, 2, 6)
-    cb.set_on_click(click_ids[slot].to_int())
-    render_block(cb, blocks[i], cur, sel_a, sel_b)
-    cb.add_child()
-    cur = cur + count_units_of(blocks[i])
-  }
+  cb.set_overflow(@gpui.OVERFLOW_VISIBLE, @gpui.OVERFLOW_SCROLL)
+  cb.set_scroll_id(0)
+  cb.set_flex(1.0, 0.0, 0.0)
+  render_doc(cb, ed.blocks, ed.sel, reg_unit, reg_box)
+  cb.add_child() // scroll → root
   cb.set_root()
   @gpui.build_tree(view, cb)
 }

@@ -16,6 +16,9 @@ pub(all) struct Editor {
   mut sel : Sel
   mut undo_stack : Array[Snapshot]
   mut redo_stack : Array[Snapshot]
+  // 「合并窗口」键：连续同键 apply_text 只压一次快照（velotype
+  // CoalescibleText 语义）。结构操作 / undo / redo / set_sel 之外均重置。
+  mut merge_key : String
 }
 
 ///|
@@ -26,6 +29,7 @@ pub fn Editor::new(blocks : Array[Block]) -> Editor {
     sel: collapsed_sel(Caret::{ unit: 0, offset: 0 }),
     undo_stack: [],
     redo_stack: [],
+    merge_key: "",
   }
 }
 
@@ -37,6 +41,27 @@ pub fn Editor::apply(
 ) -> Unit {
   push_bounded(self.undo_stack, { blocks: self.blocks, sel: self.sel })
   self.redo_stack.clear()
+  self.merge_key = ""
+  let (b, s) = op(self.blocks, self.sel)
+  self.blocks = b
+  self.sel = s
+}
+
+///|
+/// 可合并的编辑动作（键入/退格）：`key` 相同则视为同一股连续输入，
+/// 只在键变化的那一次压快照——一次 undo 撤销整段连续输入。
+pub fn Editor::apply_text(
+  self : Editor,
+  key : String,
+  op : (Array[Block], Sel) -> (Array[Block], Sel),
+) -> Unit {
+  if key != self.merge_key {
+    push_bounded(self.undo_stack, { blocks: self.blocks, sel: self.sel })
+    self.redo_stack.clear()
+    self.merge_key = key
+  } else {
+    self.redo_stack.clear()
+  }
   let (b, s) = op(self.blocks, self.sel)
   self.blocks = b
   self.sel = s
@@ -50,6 +75,7 @@ pub fn Editor::set_sel(self : Editor, s : Sel) -> Unit {
 
 ///|
 pub fn Editor::undo(self : Editor) -> Unit {
+  self.merge_key = ""
   match self.undo_stack.pop() {
     None => ()
     Some(snap) => {
@@ -62,6 +88,7 @@ pub fn Editor::undo(self : Editor) -> Unit {
 
 ///|
 pub fn Editor::redo(self : Editor) -> Unit {
+  self.merge_key = ""
   match self.redo_stack.pop() {
     None => ()
     Some(snap) => {

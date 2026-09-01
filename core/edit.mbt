@@ -133,6 +133,9 @@ pub fn doc_delete_forward(
       doc_ensure(bs),
       collapsed_sel(Caret::{ unit: if cu < 0 { 0 } else { cu }, offset: off }),
     )
+  } else if u.kind == CellU && c.offset >= char_len(u.plain) && c.unit + 1 < us.length() && us[c.unit + 1].kind == CellU {
+    // 格尾前向删除：光标移到下一格首，不动内容
+    (blocks, collapsed_sel(Caret::{ unit: c.unit + 1, offset: 0 }))
   } else if c.offset < char_len(u.plain) {
     let bs = if u.kind == CodeU {
       (u.set_plain)(str_replace_range(u.plain, c.offset, c.offset + 1, ""))
@@ -182,6 +185,9 @@ fn backspace_one(blocks : Array[Block], c : Caret) -> (Array[Block], Caret) {
       doc_ensure(bs),
       Caret::{ unit: if target >= 0 { target } else { 0 }, offset: off },
     )
+  } else if u.kind == CellU && c.unit > 0 && us[c.unit - 1].kind == CellU {
+    // 格首退格：只把光标移进上一格尾，不并内容（避免搬空留幽灵格）
+    (blocks, Caret::{ unit: c.unit - 1, offset: char_len(us[c.unit - 1].plain) })
   } else if c.unit == 0 {
     (blocks, c)
   } else {
@@ -361,6 +367,21 @@ pub fn doc_toggle_mark(
 pub(all) enum BlockOp {
   SetHeading(Int) // 已是同级标题则转回段落
   ToggleBullet
+  SetOrdered(Int) // 起始编号；已是有序则转回段落
+  SetTask
+}
+
+///|
+/// 列表整体摊平为段落序列（含每项 children），修复 ToggleBullet 丢项 bug。
+pub fn list_to_paragraphs(items : Array[Item]) -> Array[Block] {
+  let out : Array[Block] = []
+  for it in items {
+    out.push(Paragraph(it.content))
+    for ch in it.children {
+      out.push(ch)
+    }
+  }
+  out
 }
 
 ///|
@@ -375,35 +396,78 @@ pub fn doc_block_op(
     return (blocks, sel)
   }
   let top = us[c.unit].top_index
-  let bs = map_top_block(blocks, top, fn(b) {
-    Some(
-      match op {
-        SetHeading(lv) =>
-          match b {
-            Heading(l, inls) =>
-              if l == lv {
-                Paragraph(inls)
-              } else {
-                Heading(lv, inls)
-              }
-            Paragraph(inls) => Heading(lv, inls)
-            other => other
-          }
-        ToggleBullet =>
-          match b {
-            Paragraph(inls) =>
-              ListBlock(Bullet, [{ checked: None, content: inls, children: [] }])
-            ListBlock(Bullet, items) =>
-              if items.length() > 0 {
-                Paragraph(items[0].content)
-              } else {
-                Paragraph([])
-              }
-            other => other
-          }
-      },
-    )
-  })
+  let cur = blocks[top]
+  let one_run_list = fn(kind : ListKind, inls : Array[Inline]) -> Array[Block] {
+    [
+      ListBlock(kind, [
+        {
+          checked: if kind == Task { Some(false) } else { None },
+          content: inls,
+          children: [],
+        },
+      ]),
+    ]
+  }
+  // 段落→列表 / 列表→段落（多块结果一律用 splice，保住全部项）
+  let repl : Array[Block] = match op {
+    SetHeading(lv) =>
+      match cur {
+        Heading(l, inls) => if l == lv { [Paragraph(inls)] } else { [Heading(lv, inls)] }
+        Paragraph(inls) => [Heading(lv, inls)]
+        other => [other]
+      }
+    ToggleBullet =>
+      match cur {
+        Paragraph(inls) => one_run_list(Bullet, inls)
+        ListBlock(Bullet, items) => list_to_paragraphs(items)
+        ListBlock(_, items) => [ListBlock(Bullet, retag(items, Bullet))]
+        other => [other]
+      }
+    SetOrdered(n) =>
+      match cur {
+        Paragraph(inls) => one_run_list(Ordered(n), inls)
+        ListBlock(Ordered(_), items) => list_to_paragraphs(items)
+        ListBlock(_, items) => [ListBlock(Ordered(n), retag(items, Ordered(n)))]
+        other => [other]
+      }
+    SetTask =>
+      match cur {
+        Paragraph(inls) => one_run_list(Task, inls)
+        ListBlock(Task, items) => list_to_paragraphs(items)
+        ListBlock(_, items) => [ListBlock(Task, retag(items, Task))]
+        other => [other]
+      }
+  }
   let _ = us
-  (doc_ensure(bs), sel)
+  let bs = splice_top(blocks, top, repl)
+  let out = doc_ensure(bs)
+  let max_u = total_units(out)
+  let f = sel.focus
+  let a = sel.anchor
+  let cl = fn(ct : Caret) -> Caret {
+    if ct.unit >= max_u {
+      Caret::{ unit: max_u - 1, offset: 0 }
+    } else {
+      ct
+    }
+  }
+  (out, { anchor: cl(a), focus: cl(f) })
+}
+
+///|
+pub fn total_units(bs : Array[Block]) -> Int {
+  let mut n = 0
+  for b in bs {
+    n = n + count_units_of(b)
+  }
+  n
+}
+
+fn retag(items : Array[Item], kind : ListKind) -> Array[Item] {
+  items.map(it => {
+    Item::{
+      ..it,
+      checked: if kind == Task { Some(false) } else { None },
+    }
+  })
 }

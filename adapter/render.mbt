@@ -1,11 +1,10 @@
 /// GPUI 适配层（渲染侧）：块树 → gpui 命令缓冲。
 ///
-/// 策略：每个「编辑单元」渲染成一个可点击 div（段落/标题行/列表项/表格
-/// 格/代码块整体…）；任务项的 ☑/☐ 标记是独立点击区域（勾选切换）。
-/// 块内文本用 `rich_text`（多 run 样式）渲染；光标（▍）通过把 run 在光标
-/// 偏移处切开插入高亮段实现；选区用背景色高亮。框架的 click 事件不带坐标
-/// （见 docs/framework-gaps.md），因此点击单元 = 光标落到该单元尾部——
-/// 「点哪到哪」在约束内的最大逼近。
+/// 策略：每个「编辑单元」拆成 token 渲染（CJK 一字一 token、拉丁词一词，
+/// 见 textlayout.mbt）。token 是独立点击区：点击 = 光标落该 token 起点，
+/// 实现「点哪停哪」的近似（框架 click 不带坐标，framework gap §1）；折行
+/// 由 MoonBit 按估算宽度自算（无文本度量接口，gap §4）。任务项 ☑/☐ 是独立
+/// 点击区（勾选切换）；表格列宽全表统一（min+max size 锁宽）保证对齐。
 ///
 /// 本文件不做任何 FFI 调用（只写 CommandBuffer 字节），因此可以被
 /// `moon test` 通过 `to_bytes` 直接验证。
@@ -23,12 +22,16 @@ let col_sel : (Int, Int, Int) = (58, 78, 122)
 let col_mark : (Int, Int, Int) = (110, 190, 250)
 let sel_full : Int = 1_000_000
 
+// demo 窗口宽 960；滚动容器左右 padding 28*2；单元左右 padding 6*2。
+// 折行按这个估算宽度进行（窗口缩放不会重新折行——已知限制）。
+let base_avail : Float = 960.0 - 56.0 - 14.0
+
 fn rgb(c : (Int, Int, Int)) -> @gpui.Color {
   @gpui.Color::rgb(c.0, c.1, c.2)
 }
 
 fn caret_seg() -> Seg {
-  ("▍", Some(@gpui.RunStyle::new(color=rgb(col_caret), weight=700)))
+  ("▏", Some(@gpui.RunStyle::new(color=rgb(col_caret))))
 }
 
 /// 把 Marks 映射为 RunStyle 覆盖；链接内文本加色+下划线。
@@ -158,6 +161,243 @@ pub fn inline_segments(
   out
 }
 
+// --- 字符级样式流（token 渲染路径用，字符序与 core::inlines_plain 一致）---
+
+fn push_run_chars(
+  out : Array[@gpui.RunStyle?],
+  s : String,
+  lo : Int,
+  hi : Int,
+  base : @gpui.RunStyle?,
+  pos : Array[Int],
+) -> Unit {
+  let cs = s.to_array()
+  let mut j = 0
+  while j < cs.length() {
+    let p = pos[0]
+    out.push(
+      if hi > lo && p >= lo && p < hi {
+        merge_style(base, Some(@gpui.RunStyle::new(background=rgb(col_sel))))
+      } else {
+        base
+      },
+    )
+    pos[0] = p + 1
+    j = j + 1
+  }
+}
+
+fn push_char_styles(
+  out : Array[(@gpui.RunStyle)?],
+  ns : Array[@core.Inline],
+  lo : Int,
+  hi : Int,
+  base : @gpui.RunStyle?,
+  pos : Array[Int],
+) -> Unit {
+  for n in ns {
+    match n {
+      @core.Run(s, m) =>
+        push_run_chars(out, s, lo, hi, merge_style(base, style_of(m, false)), pos)
+      @core.Link(_, inner) =>
+        push_char_styles(
+          out,
+          inner,
+          lo,
+          hi,
+          merge_style(base, style_of(@core.Marks::default(), true)),
+          pos,
+        )
+      @core.Image(_, _) =>
+        push_run_chars(
+          out,
+          @core.inline_plain(n),
+          lo,
+          hi,
+          merge_style(base, Some(@gpui.RunStyle::new(color=rgb(col_mark), italic=true))),
+          pos,
+        )
+      @core.Footnote(nm) =>
+        push_run_chars(
+          out,
+          "[^" + nm + "]",
+          lo,
+          hi,
+          merge_style(base, Some(@gpui.RunStyle::new(color=rgb(col_link)))),
+          pos,
+        )
+    }
+  }
+}
+
+fn char_styles(
+  ns : Array[@core.Inline],
+  lo : Int,
+  hi : Int,
+  bold : Bool,
+) -> Array[(@gpui.RunStyle)?] {
+  let out : Array[(@gpui.RunStyle)?] = []
+  let base = if bold { Some(@gpui.RunStyle::new(weight=700)) } else { None }
+  push_char_styles(out, ns, lo, hi, base, [0])
+  out
+}
+
+// --- token 布局表（点击定位契约：app 侧按单元下标查 token 起点）-----------
+
+let unit_starts : Array[Array[Int]] = []
+
+fn remember_starts(unit : Int, starts : Array[Int]) -> Unit {
+  while unit_starts.length() <= unit {
+    unit_starts.push([])
+  }
+  unit_starts[unit] = starts
+}
+
+///|
+/// 单元 `unit` 各 token 的起始字符偏移 + 末尾单元长度（作为「行尾空白区」
+/// 的虚拟 token）。空数组表示该单元不是 token 渲染的（代码块等）。
+pub fn tok_starts_of(unit : Int) -> Array[Int] {
+  if unit >= 0 && unit < unit_starts.length() {
+    unit_starts[unit]
+  } else {
+    []
+  }
+}
+
+fn col_eq(a : @gpui.Color, b : @gpui.Color) -> Bool {
+  a.red == b.red && a.green == b.green && a.blue == b.blue && a.alpha == b.alpha
+}
+
+fn copt_eq(a : (@gpui.Color)?, b : (@gpui.Color)?) -> Bool {
+  match (a, b) {
+    (None, None) => true
+    (Some(x), Some(y)) => col_eq(x, y)
+    _ => false
+  }
+}
+
+fn sty_eq(a : (@gpui.RunStyle)?, b : (@gpui.RunStyle)?) -> Bool {
+  match (a, b) {
+    (None, None) => true
+    (Some(x), Some(y)) =>
+      copt_eq(x.color, y.color) &&
+        x.weight == y.weight &&
+        x.italic == y.italic &&
+        x.underline == y.underline &&
+        x.strikethrough == y.strikethrough &&
+        copt_eq(x.background, y.background)
+    _ => false
+  }
+}
+
+// token 字符范围 → 渲染段（同样式相邻字符合并；光标恰好插在偏移处）
+fn token_segs(
+  chars : Array[Char],
+  styles : Array[(@gpui.RunStyle)?],
+  s : Int,
+  e : Int,
+  caret : Int,
+  total : Int,
+) -> Array[Seg] {
+  let out : Array[Seg] = []
+  let mut i = s
+  while i < e {
+    if caret == i {
+      out.push(caret_seg())
+    }
+    let mut j = i + 1
+    while j < e && caret != j && sty_eq(styles[j], styles[i]) {
+      j = j + 1
+    }
+    out.push((String::from_array(chars[i:j]), styles[i]))
+    i = j
+  }
+  if caret == e && e == total {
+    out.push(caret_seg())
+  }
+  out
+}
+
+// 行尾剩余宽度的点击区：光标落单元末尾
+fn tail_zone(cb : @gpui.CommandBuffer, unit : Int, ti : Int, rtok : (Int, Int) -> Int) -> Unit {
+  cb.div()
+  cb.set_flex(1.0, 0.0, 0.0)
+  cb.set_cursor(@gpui.CURSOR_TEXT)
+  cb.set_on_click(rtok(unit, ti))
+  cb.add_child()
+}
+
+/// 一段 inline 文本 → 折行的 token 行。caret/lo/hi 语义同 inline_segments。
+fn push_text(
+  cb : @gpui.CommandBuffer,
+  ns : Array[@core.Inline],
+  caret : Int,
+  lo : Int,
+  hi : Int,
+  size : Float,
+  avail : Float,
+  unit : Int,
+  rtok : (Int, Int) -> Int,
+  bold : Bool,
+) -> Unit {
+  let chars = @core.inlines_plain(ns).to_array()
+  let styles = char_styles(ns, lo, hi, bold)
+  let lays = layout_text(chars, size, avail)
+  if lays.toks.length() == 0 {
+    // 空单元：占位 token（点击/光标都在 0），外加行尾空白区
+    remember_starts(unit, [0, 0])
+    cb.div()
+    cb.set_flex_col()
+    cb.div()
+    cb.set_flex_row()
+    cb.div()
+    cb.set_cursor(@gpui.CURSOR_TEXT)
+    cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
+    cb.set_on_click(rtok(unit, 0))
+    let segs : Array[Seg] =
+      if caret == 0 {
+        [caret_seg(), (" ", None)]
+      } else {
+        [(" ", None)]
+      }
+    cb.rich_text(segs, col_text.0, col_text.1, col_text.2, size)
+    cb.add_child() // rich_text → token div
+    cb.add_child() // token div → row
+    tail_zone(cb, unit, 1, rtok)
+    cb.add_child() // row → container
+    cb.add_child() // container → slot
+    return
+  }
+  let starts = lays.toks.map(t => t.0)
+  starts.push(chars.length())
+  remember_starts(unit, starts)
+  cb.div()
+  cb.set_flex_col()
+  let nrows = lays.rows.length()
+  let mut ri = 0
+  for row in lays.rows {
+    cb.div()
+    cb.set_flex_row()
+    for ti in row {
+      let t = lays.toks[ti]
+      let segs = token_segs(chars, styles, t.0, t.0 + t.1, caret, chars.length())
+      cb.div()
+      cb.set_cursor(@gpui.CURSOR_TEXT)
+      cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
+      cb.set_on_click(rtok(unit, ti))
+      cb.rich_text(segs, col_text.0, col_text.1, col_text.2, size)
+      cb.add_child() // rich_text → token div
+      cb.add_child() // token div → row
+    }
+    if ri == nrows - 1 {
+      tail_zone(cb, unit, lays.toks.length(), rtok)
+    }
+    cb.add_child()
+    ri = ri + 1
+  }
+  cb.add_child()
+}
+
 fn heading_size(level : Int) -> Float {
   match level {
     1 => 30.0
@@ -233,18 +473,19 @@ pub fn render_doc(
   sel : @core.Sel,
   reg : (Int) -> Int,
   rbox : (Int) -> Int,
+  rtok : (Int, Int) -> Int,
 ) -> Unit {
   let sel_a = @core.sel_start(sel)
   let sel_b = @core.sel_end(sel)
   let mut cur = 0
   for i = 0; i < blocks.length(); i = i + 1 {
-    render_slot(cb, blocks[i], cur, sel_a, sel_b, reg, rbox)
+    render_slot(cb, blocks[i], cur, sel_a, sel_b, reg, rbox, rtok, base_avail)
     cur = cur + count_units_of(blocks[i])
   }
 }
 
-// 叶子块 = 单元点击区；容器块（引用/列表/表格）由 render_block 给内部
-// 每个单元自带点击区，外层 div 不响应点击。
+// 叶子块：标题/段落走 token 点击区；代码块/HR/图片/Raw 保留整块点击
+// （光标落块尾）。容器块（引用/列表/表格）内每个单元自带点击区。
 fn render_slot(
   cb : @gpui.CommandBuffer,
   b : @core.Block,
@@ -253,24 +494,28 @@ fn render_slot(
   sel_b : @core.Caret,
   reg : (Int) -> Int,
   rbox : (Int) -> Int,
+  rtok : (Int, Int) -> Int,
+  avail : Float,
 ) -> Unit {
   let container = match b {
     @core.Quote(_) | @core.ListBlock(_, _) | @core.TableBlock(_) => true
     _ => false
   }
+  let tok_leaf = match b {
+    @core.Heading(_, _) | @core.Paragraph(_) => true
+    _ => false
+  }
   cb.div()
   if !container {
-    cb.set_cursor(@gpui.CURSOR_TEXT)
-    cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
     cb.set_padding_sides(2, 6, 2, 6)
-    cb.set_on_click(reg(cur))
+    if !tok_leaf {
+      cb.set_cursor(@gpui.CURSOR_TEXT)
+      cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
+      cb.set_on_click(reg(cur))
+    }
   }
-  render_block(cb, b, cur, sel_a, sel_b, reg, rbox)
+  render_block(cb, b, cur, sel_a, sel_b, reg, rbox, rtok, avail - 12.0)
   cb.add_child()
-}
-
-fn header_bold(segs : Array[Seg]) -> Array[Seg] {
-  segs.map(sg => (sg.0, merge_style(sg.1, Some(@gpui.RunStyle::new(weight=700)))))
 }
 
 fn render_block(
@@ -281,20 +526,25 @@ fn render_block(
   sel_b : @core.Caret,
   reg : (Int) -> Int,
   rbox : (Int) -> Int,
+  rtok : (Int, Int) -> Int,
+  avail : Float,
 ) -> Unit {
   // 叶子块的单元就是 cur；容器块（列表/表格）内每个单元各自重算窗口
   let (caret, lo, hi) = unit_sel_window(sel_a, sel_b, cur)
   match b {
-    @core.Heading(l, inls) => {
-      cb.set_font_weight(700)
-      push_rich(cb, inline_segments(inls, caret, lo, hi), heading_size(l), false)
-    }
-    @core.Paragraph(inls) => push_rich(
+    @core.Heading(l, inls) => push_text(
       cb,
-      inline_segments(inls, caret, lo, hi),
-      15.0,
-      false,
+      inls,
+      caret,
+      lo,
+      hi,
+      heading_size(l),
+      avail,
+      cur,
+      rtok,
+      true,
     )
+    @core.Paragraph(inls) => push_text(cb, inls, caret, lo, hi, 15.0, avail, cur, rtok, false)
     @core.CodeBlock(lang, code) => {
       if lang != "" {
         cb.text(lang, col_muted.0, col_muted.1, col_muted.2, 11.0)
@@ -311,7 +561,7 @@ fn render_block(
       cb.set_gap(4.0)
       let mut c2 = cur
       for ib in inner {
-        render_slot(cb, ib, c2, sel_a, sel_b, reg, rbox)
+        render_slot(cb, ib, c2, sel_a, sel_b, reg, rbox, rtok, avail - 28.0)
         c2 = c2 + count_units_of(ib)
       }
     }
@@ -348,11 +598,8 @@ fn render_block(
         }
         cb.div()
         cb.set_flex(1.0, 1.0, 0.0)
-        cb.set_cursor(@gpui.CURSOR_TEXT)
-        cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-        cb.set_on_click(reg(c2))
         let (ic, ilo, ihi) = unit_sel_window(sel_a, sel_b, c2)
-        push_rich(cb, inline_segments(it.content, ic, ilo, ihi), 15.0, false)
+        push_text(cb, it.content, ic, ilo, ihi, 15.0, avail - 30.0, c2, rtok, false)
         cb.add_child()
         cb.add_child() // row
         if it.children.length() > 0 {
@@ -362,7 +609,7 @@ fn render_block(
           cb.set_gap(2.0)
           c2 = c2 + 1
           for ch in it.children {
-            render_slot(cb, ch, c2, sel_a, sel_b, reg, rbox)
+            render_slot(cb, ch, c2, sel_a, sel_b, reg, rbox, rtok, avail - 22.0)
             c2 = c2 + count_units_of(ch)
           }
           cb.add_child()
@@ -374,25 +621,57 @@ fn render_block(
     }
     @core.TableBlock(t) => {
       cb.set_flex_col()
+      // 全表统一的列宽：max(内容估算宽) 夹到 [60, 360]，min+max size 锁死，
+      // 保证跨行列边框严格对齐；超宽内容在格内折行。
+      let mut ncols = 0
+      for row in t.rows {
+        if row.length() > ncols {
+          ncols = row.length()
+        }
+      }
+      let colw : Array[Int] = []
+      for c = 0; c < ncols; c = c + 1 {
+        let mut w : Float = 60.0
+        let mut ri = 0
+        for row in t.rows {
+          if c < row.length() {
+            let hb = t.has_header && ri == 0
+            let cw = cell_px(@core.inlines_plain(row[c]).to_array(), 14.0, hb)
+            if cw > w {
+              w = cw
+            }
+          }
+          ri = ri + 1
+        }
+        let mut wi = w.ceil().to_int()
+        if wi > 360 {
+          wi = 360
+        }
+        colw.push(wi)
+      }
       let mut c2 = cur
       let mut ri = 0
       for row in t.rows {
         cb.div()
         cb.set_flex_row()
-        for cell in row {
+        for ci = 0; ci < row.length(); ci = ci + 1 {
           cb.div()
-          cb.set_cursor(@gpui.CURSOR_TEXT)
           cb.set_border_color(1.0, @gpui.Color::rgb(70, 76, 92))
           cb.set_padding_sides(4, 10, 4, 10)
-          cb.set_min_size(60, 0)
-          cb.set_on_click(reg(c2))
+          cb.set_min_size(colw[ci], 0)
+          cb.set_max_size(colw[ci], -1)
           let (cc, clo, chi) = unit_sel_window(sel_a, sel_b, c2)
-          let segs = inline_segments(cell, cc, clo, chi)
-          push_rich(
+          push_text(
             cb,
-            if t.has_header && ri == 0 { header_bold(segs) } else { segs },
+            row[ci],
+            cc,
+            clo,
+            chi,
             14.0,
-            false,
+            (colw[ci] - 24).to_float(),
+            c2,
+            rtok,
+            t.has_header && ri == 0,
           )
           cb.add_child()
           c2 = c2 + 1

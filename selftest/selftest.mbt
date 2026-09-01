@@ -6,6 +6,25 @@
 ///|
 let failed : Array[Int] = []
 
+/// debug_dump_text 返回「u32 长度前缀 + utf8」记录流；token 化渲染后
+/// 一段文本被拆成多条记录，前缀字节会把子串切断。剥掉控制字节与
+/// 解码替换符，还原连续文本再做包含断言。
+fn squash(raw : String) -> String {
+  String::from_array(
+    raw.to_array().filter(fn(c) {
+      let u = c.to_int()
+      u >= 0x20 && u != 0xFFFD
+    }),
+  )
+}
+
+fn dump0() -> String {
+  match @nakake/gpui-bindings.debug_dump_text(0) {
+    Ok(t) => squash(t)
+    Err(_) => ""
+  }
+}
+
 fn check(needle : String, hay : String) -> Unit {
   if hay.contains(needle) {
     println("  ok: \{needle}")
@@ -23,14 +42,7 @@ fn main {
     @mdmbt/editor/adapter.build_tree(0),
     "initial build_tree",
   )
-  let dump = match @nakake/gpui-bindings.debug_dump_text(0) {
-    Ok(s) => s
-    Err(code) => {
-      println("debug_dump_text failed: \{code}")
-      failed.push(1)
-      ""
-    }
-  }
+  let dump = dump0()
   check("md_mbt 编辑器演示", dump) // 标题文本（# 不渲染，光标在文本前）
   check("GPUI 后端", dump)
   check("WYSIWYG 核心", dump)
@@ -44,8 +56,8 @@ fn main {
   check("已完成任务", dump)
   check("moon.png", dump) // 图片块 alt · url
   check("<div class=\"raw-block\">", dump) // Raw 块原样可见
-  // 光标唯一性：▍ 只应出现一次（回归防护：曾因 emit_text 尾部条件缺失到处画光标）
-  let caret_n = dump.to_array().filter(c => c == '▍').length()
+  // 光标唯一性：▏ 只应出现一次（回归防护：曾因 emit_text 尾部条件缺失到处画光标）
+  let caret_n = dump.to_array().filter(c => c == '▏').length()
   if caret_n == 1 {
     println("  ok: caret unique")
   } else {
@@ -59,10 +71,7 @@ fn main {
     @mdmbt/editor/adapter.build_tree(0),
     "rebuild after insert",
   )
-  let dump2 = match @nakake/gpui-bindings.debug_dump_text(0) {
-    Ok(s) => s
-    Err(_) => ""
-  }
+  let dump2 = dump0()
   check("Zq", dump2)
   // 模拟 undo：撤销插入 → 重建 → 新内容消失
   ed.undo()
@@ -70,15 +79,14 @@ fn main {
     @mdmbt/editor/adapter.build_tree(0),
     "rebuild after undo",
   )
-  match @nakake/gpui-bindings.debug_dump_text(0) {
-    Ok(s) =>
-      if s.contains("Zq") {
+  {
+    let s = dump0()
+    if s.contains("Zq") {
         println("MISSING: undo should remove Zq")
         failed.push(1)
       } else {
         println("  ok: undo removed Zq")
       }
-    Err(_) => { failed.push(1) }
   }
   // --- 事件注入：用 Rust 回调同款信封直接打 dispatch 入口，验证
   // dispatch → decode_event → handler → core 编辑 → dirty → rebuild → FFI 提交 ---
@@ -98,11 +106,8 @@ fn main {
     )
     failed.push(1)
   }
-  let dump3 = match @nakake/gpui-bindings.debug_dump_text(0) {
-    Ok(s) => s
-    Err(_) => ""
-  }
-  if dump3.contains("列表与任务▍") {
+  let dump3 = dump0()
+  if dump3.contains("列表与任务▏") {
     println("  ok: click moved caret to block end")
   } else {
     println("BAD: click did not move caret to 列表与任务 end")
@@ -127,11 +132,8 @@ fn main {
     )
     failed.push(1)
   }
-  let dump4 = match @nakake/gpui-bindings.debug_dump_text(0) {
-    Ok(s) => s
-    Err(_) => ""
-  }
-  if dump4.to_array().filter(c => c == '▍').length() == 1 {
+  let dump4 = dump0()
+  if dump4.to_array().filter(c => c == '▏').length() == 1 {
     println("  ok: caret unique after split")
   } else {
     println("BAD: caret not unique after split")
@@ -171,14 +173,40 @@ fn main {
         @mdmbt/editor/adapter.click_id_of(item_u),
         0,
       )
-      let d = match @nakake/gpui-bindings.debug_dump_text(0) {
-        Ok(t) => t
-        Err(_) => ""
-      }
-      if d.contains("已完成任务▍") && d.to_array().filter(c => c == '▍').length() == 1 {
+      let d = dump0()
+      if d.contains("已完成任务▏") && d.to_array().filter(c => c == '▏').length() == 1 {
         println("  ok: list-item click caret unique")
       } else {
         println("BAD: list-item click caret wrong/duplicated")
+        failed.push(1)
+      }
+    }
+  }
+  // --- token 级点击定位：点击列表项第 2 个 token，光标落 token 起点 ---
+  {
+    let u0b = @core.collect_units(ed.blocks)
+    let mut item_u2 = -1
+    for k = 0; k < u0b.length(); k = k + 1 {
+      if u0b[k].plain == "已完成任务" {
+        item_u2 = k
+      }
+    }
+    if item_u2 < 0 {
+      println("BAD: task text unit not found (token test)")
+      failed.push(1)
+    } else {
+      let _ = @mdmbt/editor/adapter.dispatch(
+        @nakake/gpui-bindings.ABI_VERSION,
+        @nakake/gpui-bindings.EVENT_CLICK,
+        0,
+        @mdmbt/editor/adapter.token_click_id_of(item_u2, 1),
+        0,
+      )
+      let d = dump0()
+      if d.contains("已▏完成任务") {
+        println("  ok: token click positions caret at token start")
+      } else {
+        println("BAD: token click did not position caret mid-unit")
         failed.push(1)
       }
     }
@@ -270,10 +298,7 @@ fn main {
       @mdmbt/editor/adapter.build_tree(0),
       "rebuild after reparse",
     )
-    let rdump = match @nakake/gpui-bindings.debug_dump_text(0) {
-      Ok(t) => t
-      Err(_) => ""
-    }
+    let rdump = dump0()
     if rdump.contains("**") {
       println("BAD: rendered text should not show literal markers")
       failed.push(1)

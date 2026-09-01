@@ -38,13 +38,16 @@ pub fn demo_sample() -> String {
 }
 
 // --- 逐编辑单元点击 ---------------------------------------------------------
-// click 事件不带坐标（framework gap）：点击单元 = 光标落到该单元尾；
-// 任务 ☑/☐ 标记独立点击区 = 勾选切换。handler id 池按需增长（历史遗留的
-// 固定 128 槽会越界全部指向末块）。id 按单元下标注册一次永久复用：闭包捕获
-// 的是单元下标，点击时读「当前」单元数组，编辑导致的内容位移天然正确。
+// click 事件不带坐标（framework gap）：文本单元渲染为 token（CJK 逐字、拉丁
+// 逐词），点击 token = 光标落该 token 起点（textlayout/render 的 token 布局
+// 表）；行尾空白区 = 单元尾。任务 ☑/☐ 标记独立点击区 = 勾选切换。
+// handler id 池按需增长（历史遗留的固定 128 槽会越界全部指向末块）。id 按
+// (单元, token 下标) 注册一次永久复用：闭包捕获的是下标，点击时读「当前」
+// 渲染留下的布局表，编辑导致的内容位移天然正确。
 // 注意：MoonBit 顶层 let 只在被引用时求值——初始化必须内联在初始化器里。
 let unit_ids : Array[@gpui.HandlerId] = []
 let box_ids : Array[@gpui.HandlerId] = []
+let tok_ids : Array[Array[@gpui.HandlerId]] = []
 
 let handlers : @gpui.HandlerRegistry = {
   let r = @gpui.HandlerRegistry::new()
@@ -70,6 +73,19 @@ fn reg_box(unit : Int) -> Int {
   box_ids[unit].to_int()
 }
 
+fn reg_token(unit : Int, ti : Int) -> Int {
+  while tok_ids.length() <= unit {
+    tok_ids.push([])
+  }
+  let arr = tok_ids[unit]
+  while arr.length() <= ti {
+    let u = unit
+    let i = arr.length()
+    arr.push(handlers.on_click(fn(_view) { on_token_click(u, i) }))
+  }
+  arr[ti].to_int()
+}
+
 ///|
 /// 单元 `unit` 的实际 click handler id（自检/测试注入事件用）。
 pub fn click_id_of(unit : Int) -> Int {
@@ -88,6 +104,28 @@ pub fn box_id_of(unit : Int) -> Int {
   } else {
     reg_box(unit)
   }
+}
+
+///|
+/// 单元 `unit` 第 `ti` 个 token（或 token 数 = 行尾空白区）的 click handler id。
+pub fn token_click_id_of(unit : Int, ti : Int) -> Int {
+  reg_token(unit, ti)
+}
+
+fn on_token_click(unit : Int, ti : Int) -> Unit {
+  let us = @core.collect_units(ed.blocks)
+  if unit < 0 || unit >= us.length() {
+    return
+  }
+  let starts = tok_starts_of(unit)
+  if starts.length() == 0 {
+    on_unit_click(unit) // 该单元当前不是 token 渲染：退化为落块尾
+    return
+  }
+  // 编辑后 token 变少：下标越界钳到单元末尾
+  let off = if ti < starts.length() { starts[ti] } else { starts[starts.length() - 1] }
+  ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit, offset: off }))
+  bump()
 }
 
 fn on_unit_click(unit : Int) -> Unit {
@@ -313,7 +351,7 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
   cb.set_overflow(@gpui.OVERFLOW_VISIBLE, @gpui.OVERFLOW_SCROLL)
   cb.set_scroll_id(0)
   cb.set_flex(1.0, 0.0, 0.0)
-  render_doc(cb, ed.blocks, ed.sel, reg_unit, reg_box)
+  render_doc(cb, ed.blocks, ed.sel, reg_unit, reg_box, reg_token)
   cb.add_child() // scroll → root
   cb.set_root()
   @gpui.build_tree(view, cb)

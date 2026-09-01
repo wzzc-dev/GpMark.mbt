@@ -5,7 +5,14 @@ fn run_render(src : String) -> Unit {
   let cb = @gpui.CommandBuffer::new()
   cb.div()
   cb.set_flex_col()
-  render_doc(cb, bs, @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 }), fn(u) { u + 1 }, fn(u) { u + 2 })
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
   cb.set_root()
 }
 
@@ -13,7 +20,14 @@ test "渲染命令缓冲含合法 GPUI 头" {
   let bs = @core.parse_doc("# H\n\ntext\n")
   let cb = @gpui.CommandBuffer::new()
   cb.div()
-  render_doc(cb, bs, @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 1 }), fn(u) { u + 1 }, fn(u) { u + 2 })
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 1 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
   let bytes = cb.to_bytes()
   assert_true(bytes.length() > 8)
   assert_true(bytes[0] == b'G')
@@ -45,7 +59,7 @@ test "行内段含样式与光标" {
   let mut found_caret = false
   let mut found_bold = false
   for seg in segs {
-    if seg.0 == "▍" {
+    if seg.0 == "▏" {
       found_caret = true
     }
     match seg.1 {
@@ -74,4 +88,52 @@ test "选区段带背景高亮" {
     }
   }
   assert_eq(bg, 2)
+}
+
+test "token 布局表：CJK 逐字 + 行尾虚拟 token" {
+  // 「甲乙」：CJK 一字一 token，起点 0,1 + 末尾 2（行尾空白区）
+  let bs = @core.parse_doc("甲乙\n")
+  let cb = @gpui.CommandBuffer::new()
+  cb.div()
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  assert_eq(tok_starts_of(0), [0, 1, 2])
+}
+
+test "token 布局表：拉丁词聚合" {
+  let bs = @core.parse_doc("hello world\n")
+  let cb = @gpui.CommandBuffer::new()
+  cb.div()
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  assert_eq(tok_starts_of(0), [0, 6, 11])
+}
+
+test "token 布局表：空单元也有点击区" {
+  // doc_ensure 会在文末补空段落作为最后一个单元
+  let bs = @core.doc_ensure(@core.parse_doc(""))
+  let empty_u = @core.collect_units(bs).length() - 1
+  let cb = @gpui.CommandBuffer::new()
+  cb.div()
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: empty_u, offset: 0 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  assert_eq(tok_starts_of(empty_u), [0, 0])
 }

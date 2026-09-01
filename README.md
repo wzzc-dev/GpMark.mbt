@@ -29,9 +29,12 @@ core/      纯逻辑编辑内核（零 GUI / 零 FFI 依赖，core/moon.pkg 无�
   strutil.mbt  字符串工具（本工具链 String API 的垫片）
 
 adapter/   GPUI 适配层（独立包，import core + gpui-bindings，不 import link 包）
-  render.mbt   块树 → gpui 命令缓冲：逐编辑单元可点击 div（含任务框独立点击区）、
-               rich_text 多 run 样式、光标段、选区高亮、表头加粗、代码块 lang 标签；
+  render.mbt   块树 → gpui 命令缓冲：文本单元按 token（CJK 逐字/拉丁逐词）拆成
+               可点击 div、任务框独立点击区、rich_text 多 run 样式、光标段、
+               选区高亮、表头加粗、代码块 lang 标签、表格定宽列；
                纯字节构造，无 FFI，可被 moon test 直接验证
+  textlayout.mbt 点击定位布局器：token 分词 + 按字符类别的宽度估算 + 贪心折行
+               （框架无坐标/度量，「点哪停哪」在 MoonBit 侧自算）
   app.mbt      编辑器状态、事件分发（键入+空格规则+活转换、Enter 规则链、快捷键、
                逐单元点击/任务框点击）、动态增长的 handler id 池、
                可滚动容器（OVERFLOW_SCROLL + set_key 跨重建保位）、
@@ -47,7 +50,7 @@ selftest/  无 GUI 自检：build_tree(0) + debug_dump_text 回读 + 事件注�
 Xcode CLT。gpui-moonbit 已 vendored 在 `third_party/`。
 
 ```sh
-moon test                     # core + adapter 单元测试（47 个，无 GUI）
+moon test                     # core + adapter 单元测试（57 个，无 GUI）
 moon build --target native    # 首次会由 link 包 prebuild 触发 cargo 构建 libgpui_sys.a
 
 ./build.sh                    # 确保 staticlib + 构建所有 native 目标
@@ -88,7 +91,7 @@ selftest 验证：解析 demo 文档 → 渲染全块词汇 → FFI 提交 → `
 | 操作 | 行为 |
 | --- | --- |
 | 直接键入 | 当前光标处插入，继承左侧 run 样式；连续键入合并为一次撤销 |
-| 点击单元（段落/列表项/表格格…） | 光标落到该单元尾（框架无坐标，见 framework-gaps） |
+| 点击文本任意处 | 光标落在点击处附近：CJK 精确到字、拉丁精确到词、行尾空白=块尾（框架无坐标，token 级近似，见 framework-gaps） |
 | 点击 ☑/☐ 任务框 | 勾选切换 |
 | Enter / Backspace / Delete | Enter 先走规则再拆分；格首退格/格尾前删只移光标（防幽灵格） |
 | Alt+Enter | 表格：当前行下方加一行 |
@@ -108,11 +111,13 @@ selftest 验证：解析 demo 文档 → 渲染全块词汇 → FFI 提交 → `
 
 完整列表见 [docs/framework-gaps.md](docs/framework-gaps.md)，摘要：
 
-- 点击不带坐标 → 点击已细化到「编辑单元」并把光标放到该单元尾，
-  不能点哪停哪（单元内像素级定位被框架封死）。
+- 点击不带坐标 → 渲染层自行分词折行，点击定位到 token 起点（CJK 一字、
+  拉丁一词）；是「点哪停哪」的近似，词中/字中无法再细分。
+- 折行按固定 960px 估算宽度手动进行 → 窗口缩放不会重新折行。
 - Tab 被框架焦点遍历吃掉 → 缩进/反缩进用 Cmd+] / Cmd+[。
-- 无文本度量接口 → ↑↓ 是"相邻编辑单元"近似，不跟视觉软换行走。
-- 光标是渲染的“▍”字符段，不闪烁；无 IME 内联候选窗。
+- 无文本度量接口 → ↑↓ 是"相邻编辑单元"近似，不跟视觉软换行走；折行宽度
+  为字符类别估算值，与实际字体度量有 ±10% 级别的出入。
+- 光标是渲染的“▏”细字符段，不闪烁；无 IME 内联候选窗。
 - 鼠标拖拽选区、右键菜单：框架单事件入口无对应事件，未实现。
 - 导出时行内特殊字符（如 `*`）不做反斜杠转义，含字面样式符号的文本
   往返可能有歧义；Raw 块本身零损失。

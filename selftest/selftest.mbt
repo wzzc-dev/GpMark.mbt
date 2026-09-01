@@ -353,6 +353,85 @@ fn main {
     println("BAD: undo did not restore bold state")
     failed.push(1)
   }
+  // --- Cmd+O 打开文件：真实事件弹路径栏 + 真文件读写回 -------------------
+  {
+    let tmp = "/tmp/mdmbt_selftest_open.md"
+    let fixture = "# 自检外部文档\n\n来自打开功能的测试内容。\n"
+    @fs.write_string_to_file(tmp, fixture) catch {
+      _ => {
+        println("BAD: cannot write temp fixture")
+        failed.push(1)
+      }
+    }
+    let r_o = @mdmbt/editor/adapter.dispatch(
+      @nakake/gpui-bindings.ABI_VERSION,
+      @nakake/gpui-bindings.EVENT_KEY,
+      0,
+      'o'.to_int(),
+      @nakake/gpui-bindings.MOD_PLATFORM,
+    )
+    if r_o != 1 || !@mdmbt/editor/adapter.dialog_shown() {
+      println("BAD: Cmd+O did not open path bar (ret=\{r_o})")
+      failed.push(1)
+    } else {
+      println("  ok: Cmd+O opened path bar")
+      check("打开文件", dump0())
+    }
+    // EVENT_TEXT 需要 Rust 侧 payload 队列（外部注入不进来），打开动作
+    // 直接调 open_path——与路径栏按 Enter 的确认入口是同一函数。
+    match @mdmbt/editor/adapter.open_path(tmp) {
+      Ok(_) => {
+        @nakake/gpui-bindings.expect_ok(
+          @mdmbt/editor/adapter.build_tree(0),
+          "rebuild after open_path",
+        )
+        let d = dump0()
+        check("自检外部文档", d)
+        check("来自打开功能的测试内容", d)
+        if @mdmbt/editor/adapter.current_path() == tmp {
+          println("  ok: opened file tracked as current")
+        } else {
+          println("BAD: current_path not tracked")
+          failed.push(1)
+        }
+        if @mdmbt/editor/adapter.dialog_shown() {
+          println("BAD: dialog should close on successful open")
+          failed.push(1)
+        }
+      }
+      Err(e) => {
+        println("BAD: open_path failed: \{e}")
+        failed.push(1)
+      }
+    }
+    // Cmd+S 回写：编辑后注入键事件，再读盘验证
+    let us = @core.collect_units(ed.blocks)
+    let last = us.length() - 1
+    ed.set_sel(@core.collapsed_sel(@core.Caret::{
+      unit: last,
+      offset: us[last].plain.to_array().length(),
+    }))
+    ed.apply_text("selftest-save", fn(b, s) { @core.doc_insert(b, s, "回写验证") })
+    let _ = @mdmbt/editor/adapter.dispatch(
+      @nakake/gpui-bindings.ABI_VERSION,
+      @nakake/gpui-bindings.EVENT_KEY,
+      0,
+      's'.to_int(),
+      @nakake/gpui-bindings.MOD_PLATFORM,
+    )
+    let saved = @fs.read_file_to_string(tmp) catch { _ => "" }
+    if saved.contains("回写验证") {
+      println("  ok: Cmd+S persisted to disk")
+    } else {
+      println("BAD: Cmd+S did not persist")
+      failed.push(1)
+    }
+    if @mdmbt/editor/adapter.dialog_shown() {
+      println("BAD: successful save should not open path bar")
+      failed.push(1)
+    }
+    let _ = @fs.remove_file(tmp) catch { _ => () }
+  }
   if failed.length() > 0 {
     println("---- dump ----")
     println(dump4)

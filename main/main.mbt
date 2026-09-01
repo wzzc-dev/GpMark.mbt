@@ -32,7 +32,25 @@ fn main {
   }
   @nakake/gpui-bindings.register_dispatch(@mdmbt/editor/adapter.dispatch)
   @mdmbt/editor/adapter.set_viewport_height(720.0)
-  @mdmbt/editor/adapter.load(@mdmbt/editor/adapter.demo_sample())
+  // 按文件启动：`open dist/MdMbt.app --args <path>`（Finder「打开方式」的
+  // 命令行形态）。读取/解析失败则回退内置 demo 文档。
+  let opened = if args.length() >= 2 {
+    match @mdmbt/editor/adapter.open_path(args[1]) {
+      Ok(_) => {
+        println("opened: " + args[1])
+        true
+      }
+      Err(e) => {
+        println("open failed: " + e + " — 回退到 demo 文档")
+        false
+      }
+    }
+  } else {
+    false
+  }
+  if !opened {
+    @mdmbt/editor/adapter.load(@mdmbt/editor/adapter.demo_sample())
+  }
   @nakake/gpui-bindings.expect_ok(
     @mdmbt/editor/adapter.build_tree(0),
     "initial build_tree",

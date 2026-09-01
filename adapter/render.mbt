@@ -952,3 +952,34 @@ fn sum_int(xs : Array[Int]) -> Int {
   }
   s
 }
+
+// --- 打开文件路径栏 ---------------------------------------------------------
+// root 列顶部的输入条（app.mbt 的 Cmd+O 对话框）：提示 + 路径 + 行内光标
+// 字符 + 错误提示。这里是全应用唯一允许「▏」字符当光标的地方——它就是
+// 行的最后一个可见段，后面没有字可推。
+
+let col_err : (Int, Int, Int) = (255, 122, 122)
+
+///|
+/// 路径栏（调用方已 push root div）。
+pub fn render_path_bar(cb : @gpui.CommandBuffer, path : String, err : String) -> Unit {
+  cb.div()
+  cb.set_flex_row()
+  cb.set_gap(10.0)
+  cb.set_padding_sides(6, 14, 6, 14)
+  cb.set_bg_color(@gpui.Color::rgb(16, 18, 24))
+  cb.text("打开文件", col_muted.0, col_muted.1, col_muted.2, 13.0)
+  cb.add_child()
+  let segs : Array[Seg] = [
+    (if path == "" { " " } else { path }, None),
+    ("▏", Some(@gpui.RunStyle::new(color=rgb(col_caret)))),
+  ]
+  if err != "" {
+    segs.push(("  " + err, Some(@gpui.RunStyle::new(color=rgb(col_err), italic=true))))
+  }
+  cb.rich_text(segs, col_text.0, col_text.1, col_text.2, 13.0)
+  cb.add_child()
+  cb.text("Enter 打开 · Esc 取消", col_muted.0, col_muted.1, col_muted.2, 13.0)
+  cb.add_child()
+  cb.add_child() // bar → root
+}

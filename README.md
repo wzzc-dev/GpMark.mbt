@@ -31,12 +31,15 @@ core/      纯逻辑编辑内核（零 GUI / 零 FFI 依赖，core/moon.pkg 无�
 adapter/   GPUI 适配层（独立包，import core + gpui-bindings，不 import link 包）
   render.mbt   块树 → gpui 命令缓冲：文本单元按 token（CJK 逐字/拉丁逐词）拆成
                可点击 div、任务框独立点击区、rich_text 多 run 样式、光标段、
-               选区高亮、表头加粗、代码块 lang 标签、表格定宽列；
+               选区高亮、表头加粗、代码块 lang 标签、表格定宽列、Cmd+O 路径栏；
+               虚拟窗口：估算高度前缀和只提交可视块 ±800px，窗口外 spacer 撑滚动行程；
                纯字节构造，无 FFI，可被 moon test 直接验证
   textlayout.mbt 点击定位布局器：token 分词 + 按字符类别的宽度估算 + 贪心折行
                （框架无坐标/度量，「点哪停哪」在 MoonBit 侧自算）
   app.mbt      编辑器状态、事件分发（键入+空格规则+活转换、Enter 规则链、快捷键、
-               逐单元点击/任务框点击）、动态增长的 handler id 池、
+               逐单元点击/任务框点击、Cmd+O 路径栏 + 打开/保存文件）、
+               滚动事件拉取（scroll_state）驱动虚拟窗口滑动、
+               动态增长的 handler id 池、
                可滚动容器（OVERFLOW_SCROLL + set_key 跨重建保位）、
                rebuild/dispatch 入口
 
@@ -50,12 +53,13 @@ selftest/  无 GUI 自检：build_tree(0) + debug_dump_text 回读 + 事件注�
 Xcode CLT。gpui-moonbit 已 vendored 在 `third_party/`。
 
 ```sh
-moon test                     # core + adapter 单元测试（57 个，无 GUI）
+moon test                     # core + adapter 单元测试（64 个，无 GUI）
 moon build --target native    # 首次会由 link 包 prebuild 触发 cargo 构建 libgpui_sys.a
 
 ./build.sh                    # 确保 staticlib + 构建所有 native 目标
 ./bundle.sh                   # 打包 dist/MdMbt.app（macOS bundle，键盘投递需要）
 open dist/MdMbt.app           # 启动编辑器 demo
+open dist/MdMbt.app --args <file.md>   # 按文件启动：直接打开该 Markdown 文件（失败回退 demo）
 ```
 
 自检（真实 FFI 链路，可在无窗口环境跑）：
@@ -104,6 +108,8 @@ selftest 验证：解析 demo 文档 → 渲染全块词汇 → FFI 提交 → `
 | Cmd+Shift+L | 代码块语言标签循环（moonbit/rust/python/…） |
 | Cmd+Z / Cmd+Shift+Z | 撤销 / 重做（快照式，含选区恢复） |
 | Cmd+A | 全文档选择 |
+| Cmd+O | 弹出路径栏：输入路径（`~` 可展开）打开 Markdown 文件；栏内 Enter 确认 / Esc 取消 |
+| Cmd+S | 规范导出回写（文档由文件打开后关联；未关联时弹路径栏提示） |
 | 多行粘贴 | 按行拆分为多段，逐行跑空格规则 |
 | 鼠标滚轮 | 全文档滚动（滚动位置跨重渲染保持） |
 
@@ -120,6 +126,10 @@ selftest 验证：解析 demo 文档 → 渲染全块词汇 → FFI 提交 → `
 - 文本区光标是绝对定位的 2px 光标条（零宽、不推文字），不闪烁；代码块内
   光标仍是“▏”字符段（会占一格宽）；无 IME 内联候选窗。
 - 鼠标拖拽选区、右键菜单：框架单事件入口无对应事件，未实现。
+- 无原生文件选择框/拖放/paste 代理 → 打开文件用 Cmd+O 路径栏或按文件启动
+  （framework-gaps §11）。
+- 虚拟窗口下方向键把光标移出可视区时视口不自动跟随（无滚动写入 API，
+  framework-gaps §12）；滚轮可达任意位置。
 - 导出时行内特殊字符（如 `*`）不做反斜杠转义，含字面样式符号的文本
   往返可能有歧义；Raw 块本身零损失。
 - 仅 macOS arm64 本地验证；无跨平台 CI。

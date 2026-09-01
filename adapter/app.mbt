@@ -91,20 +91,135 @@ fn compute_window(y : Float) -> (Int, Int) {
 }
 
 ///|
-/// 载入文档（demo 启动 / 外部注入）。
+/// 载入文档（demo 启动 / 打开文件）。切换文档即新会话：undo 历史、
+/// 关联文件、路径栏一并复位。
 pub fn load(src : String) -> Unit {
   ed.blocks = @core.doc_ensure(@core.parse_doc(src))
   ed.sel = @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 })
+  ed.undo_stack.clear()
+  ed.redo_stack.clear()
+  ed.merge_key = ""
   scroll_y.val = 0.0
   win_lo.val = 0
   win_hi.val = 0
   cache_valid.val = false
+  current_file.val = ""
+  dialog_open.val = false
+  path_buf.val = ""
+  path_err.val = ""
 }
 
 ///|
 /// 导出当前文档为规范 Markdown。
 pub fn dump() -> String {
   @core.serialize_doc(ed.blocks)
+}
+
+// --- 打开 / 保存文件（Cmd+O / Cmd+S）----------------------------------------
+// 框架无原生文件选择框、也无拖放事件（framework-gaps §6）：Cmd+O 在窗口
+// 顶部弹一条路径栏，键事件由对话框状态机接管（键入/退格/Enter/Esc），
+// Enter 用 @fs 读文件替换文档并记住路径；已关联文件的文档 Cmd+S 将规范
+// 导出回写同一路径。路径支持 `~` 展开；读入统一 CRLF→LF。
+
+let dialog_open : Ref[Bool] = { val: false }
+let path_buf : Ref[String] = { val: "" }
+let path_err : Ref[String] = { val: "" }
+let current_file : Ref[String] = { val: "" }
+
+///|
+/// 路径栏是否显示中。
+pub fn dialog_shown() -> Bool { dialog_open.val }
+
+///|
+/// 当前文档关联的文件路径（空串 = 未关联，如 demo 文档）。
+pub fn current_path() -> String { current_file.val }
+
+fn home_dir() -> String {
+  match @env.get_env_var("HOME") {
+    Some(h) => h
+    None => "~"
+  }
+}
+
+fn expand_tilde(p : String) -> String {
+  if p == "~" {
+    home_dir()
+  } else if p.has_prefix("~/") {
+    home_dir() + String::from_array(p.to_array()[1:])
+  } else {
+    p
+  }
+}
+
+fn normalize_eol(s : String) -> String {
+  let cs = s.to_array()
+  let out : Array[Char] = []
+  let mut i = 0
+  while i < cs.length() {
+    if cs[i] == '\r' {
+      out.push('\n')
+      if i + 1 < cs.length() && cs[i + 1] == '\n' {
+        i = i + 1
+      }
+    } else {
+      out.push(cs[i])
+    }
+    i = i + 1
+  }
+  String::from_array(out)
+}
+
+fn read_text(p : String) -> String? {
+  let s = @fs.read_file_to_string(p) catch { _ => return None }
+  Some(s)
+}
+
+fn write_text(p : String, s : String) -> Bool {
+  @fs.write_string_to_file(p, s) catch { _ => return false }
+  true
+}
+
+///|
+/// 按路径打开 Markdown 文件并替换当前文档（`~` 展开、CRLF 归一、
+/// 清空 undo 历史、记住 current_file 供 Cmd+S 回写）。失败返回可读错误。
+pub fn open_path(p : String) -> Result[Unit, String] {
+  let full = expand_tilde(p.trim().to_owned())
+  if full == "" || full == "~" || full == "~/" {
+    Err("路径为空")
+  } else if !@fs.path_exists(full) {
+    Err("文件不存在：" + full)
+  } else {
+    match read_text(full) {
+      None => Err("读取失败：" + full)
+      Some(text) => {
+        load(normalize_eol(text))
+        current_file.val = full
+        dialog_open.val = false
+        path_buf.val = full
+        path_err.val = ""
+        Ok(())
+      }
+    }
+  }
+}
+
+///|
+/// 规范导出当前文档，回写到已关联文件。未关联/写失败返回错误。
+pub fn save_current_file() -> Result[Unit, String] {
+  let p = current_file.val
+  if p == "" {
+    Err("当前文档未关联文件（先 Cmd+O 打开一个文件）")
+  } else if write_text(p, dump()) {
+    Ok(())
+  } else {
+    Err("写入失败：" + p)
+  }
+}
+
+fn open_dialog() -> Unit {
+  path_buf.val = if current_file.val == "" { "~/" } else { current_file.val }
+  path_err.val = ""
+  dialog_open.val = true
 }
 
 ///|
@@ -250,6 +365,12 @@ fn on_text(t : String) -> Unit {
     swallow_gen[0] = -1
     return
   }
+  if dialog_open.val {
+    path_buf.val = path_buf.val + t
+    path_err.val = ""
+    bump()
+    return
+  }
   // 多行粘贴拆段 + 「标记+空格」规则 + 活行内转换
   // （同单元连续键入合并 undo：字面标记变样式与键入本身同一撤销点）
   let unit = ed.sel.focus.unit.to_string()
@@ -314,7 +435,25 @@ fn set_mark(self_bold : Bool, it_italic : Bool, st : Bool, cd : Bool) -> Unit {
 fn on_key(code : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
   if (mods & @gpui.MOD_PLATFORM) != 0 {
-    if code_hit(code, 'z') || code_hit(code, 'Z') {
+    if code_hit(code, 'o') || code_hit(code, 'O') {
+      if dialog_open.val {
+        dialog_open.val = false
+      } else {
+        open_dialog()
+      }
+      bump()
+    } else if code_hit(code, 's') || code_hit(code, 'S') {
+      match save_current_file() {
+        Ok(_) => ()
+        Err(e) => {
+          open_dialog()
+          path_err.val = e
+        }
+      }
+      bump()
+    } else if dialog_open.val {
+      bump() // 路径栏打开时吞掉其余组合键
+    } else if code_hit(code, 'z') || code_hit(code, 'Z') {
       if (mods & @gpui.MOD_SHIFT) != 0 {
         ed.redo()
       } else {
@@ -347,6 +486,24 @@ fn on_key(code : Int, mods : Int) -> Unit {
 
 fn on_named_key(id : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
+  if dialog_open.val {
+    // 路径栏按键接管：Esc 取消 / Enter 打开 / Backspace 删字符，其余吞掉
+    if id == @gpui.KEY_ESCAPE {
+      dialog_open.val = false
+    } else if id == @gpui.KEY_ENTER {
+      match open_path(path_buf.val) {
+        Ok(_) => ()
+        Err(e) => path_err.val = e
+      }
+    } else if id == @gpui.KEY_BACKSPACE {
+      let cs = path_buf.val.to_array()
+      if cs.length() > 0 {
+        path_buf.val = String::from_array(cs[0:cs.length() - 1])
+      }
+    }
+    bump()
+    return
+  }
   let ext = (mods & @gpui.MOD_SHIFT) != 0
   let cmd = (mods & @gpui.MOD_PLATFORM) != 0
   let alt = (mods & @gpui.MOD_ALT) != 0
@@ -446,10 +603,13 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
   win_hi.val = hi
   let cum = cache_cum.val
   let cb = @gpui.CommandBuffer::new()
-  cb.div() // root：仅承载底色与滚动容器
+  cb.div() // root：仅承载底色、路径栏与滚动容器
   cb.set_key("root")
   cb.set_bg(28, 30, 38)
   cb.set_flex_col()
+  if dialog_open.val {
+    render_path_bar(cb, path_buf.val, path_err.val)
+  }
   cb.div() // 滚动容器：内容超高时鼠标滚轮可滚（框架提供原生滚动）
   cb.set_key("scroll")
   cb.set_flex_col()

@@ -102,3 +102,27 @@ Enter/Backspace 自定义拦截（widget 会吞掉这些键，见 lib.rs
 resize），**不需要**窗口/App 上下文；`run_window` 仅打开窗口渲染
 `VIEWS[view]`。因此 `selftest` 可以完全无 GUI 地走
 build_tree → debug_dump_text 全链路（本项目 CI 手段）。
+## 11. 无原生文件选择框 / 无拖放 / 无 paste 代理
+
+框架没有 open-panel、没有文件拖放事件，`Cmd+V` 也不会作为 paste 内容送达
+（gpui-sys 仅在 focus 于 `OP_TEXT_INPUT` widget 时才代理剪贴板；我们不用
+widget，见缺口 2）。
+
+- **影响**：拿不到「浏览…」对话框选中的路径，也不能把文件拖进窗口。
+- **绕行**（`adapter/app.mbt` + `main/main.mbt`）：
+  1. `Cmd+O` 弹出窗口顶部**路径栏**：应用自管的单行输入（on_text/
+     Backspace/Enter/Esc 全走现有事件链），`~` 展开后用 `@fs` 读文件；
+     `Cmd+S` 规范导出回写关联文件（未关联时报错并弹栏提示）。
+  2. `open dist/MdMbt.app --args <path>` 按文件启动（Finder「打开方式」
+     的命令行形态），失败回退内置 demo。
+  限制：路径栏没有 IME 内联候选（同缺口 2）；不做自动补全。
+
+## 12. 无程序化滚动写入（虚拟窗口的遗留缺口）
+
+滚动状态只有**读**接口 `scroll_state(view, scroll_id)`（notify-then-pull），
+`ScrollHandle::set_offset` 只存在于 Rust 侧 benchmark 内部，没有对应 opcode。
+
+- **影响**：虚拟窗口渲染（16c496f）下，用方向键把光标移出可视窗口时无法
+  让视口自动跟随——只能靠用户滚动滚轮。spacer 保证滚动行程与全文等长，
+  所以手动滚回去总能到。
+- **绕行**：无（正面解法是给 ABI 加 `OP_SET_SCROLL_OFFSET`，本期不改 ABI）。

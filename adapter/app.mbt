@@ -34,7 +34,7 @@ pub fn dump() -> String {
 ///|
 /// demo 用的示例文档（标题/列表/任务/引用/代码/表格/图片/HR/行内样式/链接/Raw）。
 pub fn demo_sample() -> String {
-  "# md_mbt 编辑器演示\n" + "\n这是 **GPUI 后端** 的 MoonBit *Markdown* WYSIWYG 核心。\n" + "直接键入编辑，Cmd+Z 撤销，点击任意块聚焦（光标落到块尾）。\n" + "\n## 列表与任务\n" + "- 无序项 alpha\n" + "  - 嵌套子项\n" + "1. 有序一\n" + "2. 有序二\n" + "- [x] 已完成任务\n" + "- [ ] 待办任务\n" + "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.dev) 都在同一段里。\n" + "\n```moonbit\nfn greet(name : String) -> String {\n  \"hello \" + name\n}\n```\n" + "\n## 表格\n" + "| 层 | 角色 | 说明 |\n" + "| --- | --- | --- |\n" + "| core | 纯逻辑 | 块树 / 解析 / 编辑 / undo，零 FFI |\n" + "| adapter | 适配 | 块树 → gpui 节点树 + 事件回灌 |\n" + "| main | 装配 | 链接 Rust staticlib，进入事件循环 |\n" + "\n![moon](moon.png)\n" + "\n---\n" + "\n<div class=\"raw-block\">不在稳定子集的语法保留为原样块，导出时零损失。</div>\n"
+  "# md_mbt 编辑器演示\n" + "\n这是 **GPUI 后端** 的 MoonBit *Markdown* WYSIWYG 核心。\n" + "直接键入编辑，Cmd+Z 撤销，点击任意文字处定位光标。\n" + "\n## 列表与任务\n" + "- 无序项 alpha\n" + "  - 嵌套子项\n" + "1. 有序一\n" + "2. 有序二\n" + "- [x] 已完成任务\n" + "- [ ] 待办任务\n" + "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.dev) 都在同一段里。\n" + "\n```moonbit\nfn greet(name : String) -> String {\n  \"hello \" + name\n}\n```\n" + "\n## 表格\n" + "| 层 | 角色 | 说明 |\n" + "| --- | --- | --- |\n" + "| core | 纯逻辑 | 块树 / 解析 / 编辑 / undo，零 FFI |\n" + "| adapter | 适配 | 块树 → gpui 节点树 + 事件回灌 |\n" + "| main | 装配 | 链接 Rust staticlib，进入事件循环 |\n" + "\n![moon](moon.png)\n" + "\n---\n" + "\n<div class=\"raw-block\">不在稳定子集的语法保留为原样块，导出时零损失。</div>\n"
 }
 
 // --- 逐编辑单元点击 ---------------------------------------------------------

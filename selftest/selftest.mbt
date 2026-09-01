@@ -56,12 +56,13 @@ fn main {
   check("已完成任务", dump)
   check("moon.png", dump) // 图片块 alt · url
   check("<div class=\"raw-block\">", dump) // Raw 块原样可见
-  // 光标唯一性：▏ 只应出现一次（回归防护：曾因 emit_text 尾部条件缺失到处画光标）
+  // 光标是绝对定位覆盖层，不进入文本流：▏ 不应出现在 dump（回归防护：
+  // 曾以字符段实现，会把后面的字推走一格）
   let caret_n = dump.to_array().filter(c => c == '▏').length()
-  if caret_n == 1 {
-    println("  ok: caret unique")
+  if caret_n == 0 {
+    println("  ok: caret not in text flow")
   } else {
-    println("BAD caret count: \{caret_n}")
+    println("BAD: caret char leaked into text flow: \{caret_n}")
     failed.push(1)
   }
   // 模拟编辑：插入字符 → 重建 → dump 应包含新内容
@@ -107,11 +108,14 @@ fn main {
     failed.push(1)
   }
   let dump3 = dump0()
-  if dump3.contains("列表与任务▏") {
-    println("  ok: click moved caret to block end")
-  } else {
-    println("BAD: click did not move caret to 列表与任务 end")
-    failed.push(1)
+  {
+    let f = ed.sel.focus
+    if f.unit == 2 && f.offset > 0 {
+      println("  ok: click moved caret to block end (unit=\{f.unit})")
+    } else {
+      println("BAD: click did not move caret, focus=\{f.unit}@\{f.offset}")
+      failed.push(1)
+    }
   }
   let r_enter = @mdmbt/editor/adapter.dispatch(
     @nakake/gpui-bindings.ABI_VERSION,
@@ -133,10 +137,10 @@ fn main {
     failed.push(1)
   }
   let dump4 = dump0()
-  if dump4.to_array().filter(c => c == '▏').length() == 1 {
-    println("  ok: caret unique after split")
+  if dump4.to_array().filter(c => c == '▏').length() == 0 {
+    println("  ok: no caret chars after split")
   } else {
-    println("BAD: caret not unique after split")
+    println("BAD: caret char leaked after split")
     failed.push(1)
   }
   // Cmd+Z 走 on_key 路径
@@ -174,10 +178,13 @@ fn main {
         0,
       )
       let d = dump0()
-      if d.contains("已完成任务▏") && d.to_array().filter(c => c == '▏').length() == 1 {
-        println("  ok: list-item click caret unique")
+      let f = ed.sel.focus
+      let expect_off = u0[item_u].plain.to_array().length()
+      if f.unit == item_u && f.offset == expect_off &&
+        d.to_array().filter(c => c == '▏').length() == 0 {
+        println("  ok: list-item click caret at unit end, no caret chars")
       } else {
-        println("BAD: list-item click caret wrong/duplicated")
+        println("BAD: list-item click caret wrong: \{f.unit}@\{f.offset}")
         failed.push(1)
       }
     }
@@ -203,10 +210,12 @@ fn main {
         0,
       )
       let d = dump0()
-      if d.contains("已▏完成任务") {
-        println("  ok: token click positions caret at token start")
+      let f2 = ed.sel.focus
+      if f2.unit == item_u2 && f2.offset == 1 &&
+        d.to_array().filter(c => c == '▏').length() == 0 {
+        println("  ok: token click positions caret at token start, no text shift")
       } else {
-        println("BAD: token click did not position caret mid-unit")
+        println("BAD: token click caret wrong: \{f2.unit}@\{f2.offset}")
         failed.push(1)
       }
     }

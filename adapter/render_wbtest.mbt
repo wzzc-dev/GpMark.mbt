@@ -106,6 +106,23 @@ test "token 布局表：CJK 逐字 + 行尾虚拟 token" {
   assert_eq(tok_starts_of(0), [0, 1, 2])
 }
 
+test "token 布局表：光标所在 token 分裂为两段" {
+  // "hello world" 默认 tokens [0,6),[6,5)；光标在 3 → 首 token 分裂，
+  // 子 token 起点表 [0,3,6,11]，右半段左缘 = 零宽光标位置
+  let bs = @core.parse_doc("hello world\n")
+  let cb = @gpui.CommandBuffer::new()
+  cb.div()
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 3 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  assert_eq(tok_starts_of(0), [0, 3, 6, 11])
+}
+
 test "token 布局表：拉丁词聚合" {
   let bs = @core.parse_doc("hello world\n")
   let cb = @gpui.CommandBuffer::new()

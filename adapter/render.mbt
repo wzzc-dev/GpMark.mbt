@@ -296,34 +296,47 @@ fn token_segs(
   styles : Array[(@gpui.RunStyle)?],
   s : Int,
   e : Int,
-  caret : Int,
-  total : Int,
 ) -> Array[Seg] {
   let out : Array[Seg] = []
   let mut i = s
   while i < e {
-    if caret == i {
-      out.push(caret_seg())
-    }
     let mut j = i + 1
-    while j < e && caret != j && sty_eq(styles[j], styles[i]) {
+    while j < e && sty_eq(styles[j], styles[i]) {
       j = j + 1
     }
     out.push((String::from_array(chars[i:j]), styles[i]))
     i = j
   }
-  if caret == e && e == total {
-    out.push(caret_seg())
-  }
   out
 }
 
-// 行尾剩余宽度的点击区：光标落单元末尾
-fn tail_zone(cb : @gpui.CommandBuffer, unit : Int, ti : Int, rtok : (Int, Int) -> Int) -> Unit {
+/// 零宽光标：绝对定位的 2px 光标条，挂在 token div 内左缘——脱离排版
+/// 流，不占宽度、不推走后面的字；top/bottom=0 使高度自动等于行高。
+/// 它自己带同款点击 handler，2px 条带上的点击不会落空。
+fn caret_overlay(cb : @gpui.CommandBuffer, unit : Int, ti : Int, rtok : (Int, Int) -> Int) -> Unit {
+  cb.div()
+  cb.set_position(@gpui.POSITION_ABSOLUTE)
+  cb.set_inset(0, -1, 0, 0)
+  cb.set_min_size(2, -1)
+  cb.set_bg_color(rgb(col_caret))
+  cb.set_on_click(rtok(unit, ti))
+  cb.add_child()
+}
+
+fn tail_zone(
+  cb : @gpui.CommandBuffer,
+  unit : Int,
+  ti : Int,
+  rtok : (Int, Int) -> Int,
+  show_caret : Bool,
+) -> Unit {
   cb.div()
   cb.set_flex(1.0, 0.0, 0.0)
   cb.set_cursor(@gpui.CURSOR_TEXT)
   cb.set_on_click(rtok(unit, ti))
+  if show_caret {
+    caret_overlay(cb, unit, ti, rtok)
+  }
   cb.add_child()
 }
 
@@ -354,43 +367,70 @@ fn push_text(
     cb.set_cursor(@gpui.CURSOR_TEXT)
     cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
     cb.set_on_click(rtok(unit, 0))
-    let segs : Array[Seg] =
-      if caret == 0 {
-        [caret_seg(), (" ", None)]
-      } else {
-        [(" ", None)]
-      }
-    cb.rich_text(segs, col_text.0, col_text.1, col_text.2, size)
+    cb.rich_text([(" ", None)], col_text.0, col_text.1, col_text.2, size)
     cb.add_child() // rich_text → token div
+    if caret == 0 {
+      caret_overlay(cb, unit, 0, rtok)
+    }
     cb.add_child() // token div → row
-    tail_zone(cb, unit, 1, rtok)
+    tail_zone(cb, unit, 1, rtok, false)
     cb.add_child() // row → container
     cb.add_child() // container → slot
     return
   }
-  let starts = lays.toks.map(t => t.0)
-  starts.push(chars.length())
+  // 光标落在 token 内部时把该 token 切成两个子 token——右半段的左缘正是
+  // 光标位置，零宽光标条就画在那里（不插字符、不推文字）。
+  let sub_rows : Array[Array[(Int, Int, Int)]] = [] // (start, len, 全局子 token 下标)
+  let starts : Array[Int] = []
+  let mut si = 0
+  for row in lays.rows {
+    let r : Array[(Int, Int, Int)] = []
+    for ti in row {
+      let t = lays.toks[ti]
+      if caret > t.0 && caret < t.0 + t.1 {
+        r.push((t.0, caret - t.0, si))
+        starts.push(t.0)
+        si = si + 1
+        r.push((caret, t.0 + t.1 - caret, si))
+        starts.push(caret)
+        si = si + 1
+      } else {
+        r.push((t.0, t.1, si))
+        starts.push(t.0)
+        si = si + 1
+      }
+    }
+    sub_rows.push(r)
+  }
+  starts.push(chars.length()) // 行尾空白区 = 下标 si，点击/光标 = 单元尾
   remember_starts(unit, starts)
   cb.div()
   cb.set_flex_col()
-  let nrows = lays.rows.length()
+  let nrows = sub_rows.length()
   let mut ri = 0
-  for row in lays.rows {
+  for row in sub_rows {
     cb.div()
     cb.set_flex_row()
-    for ti in row {
-      let t = lays.toks[ti]
-      let segs = token_segs(chars, styles, t.0, t.0 + t.1, caret, chars.length())
+    for t in row {
       cb.div()
       cb.set_cursor(@gpui.CURSOR_TEXT)
       cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-      cb.set_on_click(rtok(unit, ti))
-      cb.rich_text(segs, col_text.0, col_text.1, col_text.2, size)
+      cb.set_on_click(rtok(unit, t.2))
+      cb.rich_text(
+        token_segs(chars, styles, t.0, t.0 + t.1),
+        col_text.0,
+        col_text.1,
+        col_text.2,
+        size,
+      )
       cb.add_child() // rich_text → token div
+      if t.0 == caret {
+        caret_overlay(cb, unit, t.2, rtok)
+      }
       cb.add_child() // token div → row
     }
     if ri == nrows - 1 {
-      tail_zone(cb, unit, lays.toks.length(), rtok)
+      tail_zone(cb, unit, si, rtok, caret == chars.length())
     }
     cb.add_child()
     ri = ri + 1

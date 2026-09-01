@@ -29,8 +29,10 @@ Enter/Backspace 自定义拦截（widget 会吞掉这些键，见 lib.rs
 `input_focused` 分支——焦点在 input 时框架不再向 app 转发任何键事件）。
 
 - **影响**：goal 中允许的降级路径（“活动块 = text_input”）实际也不可用。
-- **绕行**：完全自绘——文档渲染为 `rich_text` run，光标是插入文本流的
-  “▍” 彩色段，选区是背景色 run；所有键事件走 app 级
+- **绕行**：完全自绘——文档渲染为 `rich_text` run；文本区光标是绝对定位
+  （`OP_SET_POSITION` + `OP_SET_INSET`）的零宽光标条，画在光标偏移所在
+  token/子 token 的左缘，不占排版宽度、不推文字（代码块内仍是“▏”字符段，
+  因为把行拆成两半会破坏长行软换行）；选区是背景色 run；所有键事件走 app 级
   `on_key/on_named_key/on_text` 由 core 的编辑内核处理。
   代价：没有系统光标闪烁、没有 IME 内联候选窗（goal 明确不要求 IME）。
 

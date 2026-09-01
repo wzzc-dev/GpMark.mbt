@@ -660,13 +660,13 @@ fn map_marks(ns : Array[Inline], f : (Marks) -> Marks) -> Array[Inline] {
 fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
   let out : Array[Inline] = []
   let n = cs.length()
-  let mut buf = ""
+  let mut buf : Array[Char] = []
   let mut i = 0
   while i < n {
     let c = cs[i]
     // 转义
     if c == '\\' && i + 1 < n {
-      buf = buf + cs[i + 1].to_string()
+      buf.push(cs[i + 1])
       i = i + 2
       continue
     }
@@ -675,9 +675,9 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
       let k = run_len(cs, i, '`')
       let close = find_close(cs, i + k, '`', k)
       if close >= 0 {
-        if buf != "" {
-          out.push(Run(buf, Marks::default()))
-          buf = ""
+        if buf.length() > 0 {
+          out.push(Run(String::from_array(buf), Marks::default()))
+          buf = []
         }
         let inner = trim_str(String::from_array(cs[i + k:close]))
         out.push(
@@ -691,7 +691,9 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
         i = close + k
         continue
       } else {
-        buf = buf + repeat_str("`", k)
+        for _ in 0..<k {
+          buf.push('`')
+        }
         i = i + k
         continue
       }
@@ -700,9 +702,9 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
     if c == '~' && run_len(cs, i, '~') >= 2 {
       let close = find_close(cs, i + 2, '~', 2)
       if close >= 0 {
-        if buf != "" {
-          out.push(Run(buf, Marks::default()))
-          buf = ""
+        if buf.length() > 0 {
+          out.push(Run(String::from_array(buf), Marks::default()))
+          buf = []
         }
         push_all(
           out,
@@ -732,9 +734,9 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
         -1
       }
       if close >= 0 {
-        if buf != "" {
-          out.push(Run(buf, Marks::default()))
-          buf = ""
+        if buf.length() > 0 {
+          out.push(Run(String::from_array(buf), Marks::default()))
+          buf = []
         }
         let m = mark_of(kk)
         push_all(
@@ -748,8 +750,8 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
         i = close + kk
         continue
       } else {
-        for k2 = 0; k2 < kk; k2 = k2 + 1 {
-          buf = buf + c.to_string()
+        for _ in 0..<kk {
+          buf.push(c)
         }
         i = i + kk
         continue
@@ -761,9 +763,9 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
       if rb >= 0 && rb + 1 < n && cs[rb + 1] == '(' {
         let rp = find_char(cs, rb + 2, ')')
         if rp >= 0 {
-          if buf != "" {
-            out.push(Run(buf, Marks::default()))
-            buf = ""
+          if buf.length() > 0 {
+            out.push(Run(String::from_array(buf), Marks::default()))
+            buf = []
           }
           out.push(
             Image(
@@ -775,7 +777,7 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
           continue
         }
       }
-      buf = buf + "!"
+      buf.push('!')
       i = i + 1
       continue
     }
@@ -783,9 +785,9 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
     if c == '[' && i + 1 < n && cs[i + 1] == '^' {
       let rb = find_char(cs, i + 2, ']')
       if rb >= 0 {
-        if buf != "" {
-          out.push(Run(buf, Marks::default()))
-          buf = ""
+        if buf.length() > 0 {
+          out.push(Run(String::from_array(buf), Marks::default()))
+          buf = []
         }
         out.push(Footnote(String::from_array(cs[i + 2:rb])))
         i = rb + 1
@@ -798,9 +800,9 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
       if rb >= 0 && rb + 1 < n && cs[rb + 1] == '(' {
         let rp = find_char(cs, rb + 2, ')')
         if rp >= 0 {
-          if buf != "" {
-            out.push(Run(buf, Marks::default()))
-            buf = ""
+          if buf.length() > 0 {
+            out.push(Run(String::from_array(buf), Marks::default()))
+            buf = []
           }
           let inner = parse_inline_gen(cs[i + 1:rb].to_array(), false)
           out.push(Link(String::from_array(cs[rb + 2:rp]), inner))
@@ -809,11 +811,11 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
         }
       }
     }
-    buf = buf + c.to_string()
+    buf.push(c)
     i = i + 1
   }
-  if buf != "" {
-    out.push(Run(buf, Marks::default()))
+  if buf.length() > 0 {
+    out.push(Run(String::from_array(buf), Marks::default()))
   }
   normalize_inlines(out)
 }

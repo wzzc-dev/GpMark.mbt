@@ -31,6 +31,7 @@ fn main {
     return
   }
   @nakake/gpui-bindings.register_dispatch(@mdmbt/editor/adapter.dispatch)
+  @mdmbt/editor/adapter.set_viewport_height(720.0)
   @mdmbt/editor/adapter.load(@mdmbt/editor/adapter.demo_sample())
   @nakake/gpui-bindings.expect_ok(
     @mdmbt/editor/adapter.build_tree(0),

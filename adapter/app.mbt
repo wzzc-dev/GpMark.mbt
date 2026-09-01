@@ -15,7 +15,79 @@ let rev : @gpui.Signal[Int] = store.signal(rev_cell)
 pub let ed : @core.Editor = @core.Editor::new([@core.Paragraph([])])
 
 fn bump() -> Unit {
+  cache_valid.val = false
   rev.set(store, rev.get(store) + 1)
+}
+
+// --- 虚拟窗口状态 -----------------------------------------------------------
+// 渲染只提交可视块 ± WINDOW_PAD（渲染前用高度前缀和定位窗口）。滚动条
+// 行程由窗口两侧 spacer 撑出；GPUI 的 ScrollHandle 保持原生偏移，跨重建
+// 由 set_key("scroll") 保位。对齐 md_editor gpui v1 的做法（v1 用固定行
+// 高，md_mbt 保真渲染改用估算高度前缀和）。
+const WINDOW_PAD : Float = 800.0
+
+let viewport_h : Ref[Float] = { val: 800.0 }
+
+///|
+/// 设定滚动视口高度（demo 窗口与基准 1280x800 窗口不同）。
+pub fn set_viewport_height(h : Float) -> Unit {
+  viewport_h.val = h
+}
+
+let scroll_y : Ref[Float] = { val: 0.0 }
+let win_lo : Ref[Int] = { val: 0 }
+let win_hi : Ref[Int] = { val: 0 }
+
+// 高度/单元前缀和缓存（长度 n+1）。只在文档版本 bump 后重算；纯滚动重建
+// 直接复用，避免每次滚动都对全文重新 tokenize 估高。
+let cache_valid : Ref[Bool] = { val: false }
+let cache_cum : Ref[Array[Float]] = { val: [] }
+let cache_units : Ref[Array[Int]] = { val: [] }
+
+fn ensure_height_cache() -> Unit {
+  let blocks = ed.blocks
+  if cache_valid.val && cache_cum.val.length() == blocks.length() + 1 {
+    return
+  }
+  let cum : Array[Float] = [0.0]
+  let units : Array[Int] = [0]
+  let mut h : Float = 0.0
+  let mut u = 0
+  for i = 0; i < blocks.length(); i = i + 1 {
+    let b = blocks[i]
+    // 滚动容器 set_gap(6.0)：块间间隙计入滚动行程。
+    if i > 0 {
+      h = h + 6.0
+    }
+    h = h + estimate_slot_height(b, base_avail)
+    u = u + count_units_of(b)
+    cum.push(h)
+    units.push(u)
+  }
+  cache_cum.val = cum
+  cache_units.val = units
+  cache_valid.val = true
+}
+
+///|
+/// 可视块区间 [lo, hi)：cum 前缀和与 scroll_y ± viewport ± overscan 相交。
+fn compute_window(y : Float) -> (Int, Int) {
+  let n = ed.blocks.length()
+  let cum = cache_cum.val
+  if cum.length() != n + 1 {
+    return (0, n)
+  }
+  let top = y - WINDOW_PAD
+  let bottom = y + viewport_h.val + WINDOW_PAD
+  let mut lo = 0
+  while lo < n && cum[lo + 1] <= top {
+    lo = lo + 1
+  }
+  let mut hi = lo
+  while hi < n && cum[hi] < bottom {
+    hi = hi + 1
+  }
+  (lo, hi)
 }
 
 ///|
@@ -23,6 +95,10 @@ fn bump() -> Unit {
 pub fn load(src : String) -> Unit {
   ed.blocks = @core.doc_ensure(@core.parse_doc(src))
   ed.sel = @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 })
+  scroll_y.val = 0.0
+  win_lo.val = 0
+  win_hi.val = 0
+  cache_valid.val = false
 }
 
 ///|
@@ -336,8 +412,39 @@ fn on_named_key(id : Int, mods : Int) -> Unit {
 let ctx : @gpui.RenderCtx = { view: 0, store, handlers }
 
 ///|
-/// 全量重建（store dirty 时由框架调度）。
+/// 滚动 div 的 id：EVENT_SCROLL 公告后拉取真实偏移，仅当可视窗口
+/// （可见块区间）变化时才 bump 重建——原生滚轮的高频小步移动留在
+/// ScrollHandle 内，不触发 MoonBit 命令树重建。
+let scroll_handle : @gpui.ScrollId = {
+  let id = handlers.new_scroll_id()
+  handlers.on_scroll(id, fn(view) {
+    match @gpui.scroll_state(view, id.to_int()) {
+      Ok(state) => {
+        let next = (-state.offset_y).max(0.0)
+        scroll_y.val = next
+        if cache_valid.val {
+          let (lo, hi) = compute_window(next)
+          if lo != win_lo.val || hi != win_hi.val {
+            bump()
+          }
+        }
+      }
+      Err(_) => ()
+    }
+  })
+  id
+}
+
+///|
+/// 窗口化重建（store dirty 时由框架调度）：只提交可视块 ± WINDOW_PAD，
+/// 窗口外用两个 spacer div 撑出滚动行程（对齐 md_editor gpui v1 策略）。
 pub fn rebuild(view : Int) -> Result[Unit, Int] {
+  ensure_height_cache()
+  let n = ed.blocks.length()
+  let (lo, hi) = compute_window(scroll_y.val)
+  win_lo.val = lo
+  win_hi.val = hi
+  let cum = cache_cum.val
   let cb = @gpui.CommandBuffer::new()
   cb.div() // root：仅承载底色与滚动容器
   cb.set_key("root")
@@ -349,9 +456,32 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
   cb.set_gap(6.0)
   cb.set_padding(28)
   cb.set_overflow(@gpui.OVERFLOW_VISIBLE, @gpui.OVERFLOW_SCROLL)
-  cb.set_scroll_id(0)
+  cb.set_scroll_id(scroll_handle.to_int())
   cb.set_flex(1.0, 0.0, 0.0)
-  render_doc(cb, ed.blocks, ed.sel, reg_unit, reg_box, reg_token)
+  if lo > 0 {
+    cb.div()
+    cb.set_size(1.0, cum[lo])
+    cb.set_flex(0.0, 0.0, cum[lo])
+    cb.add_child()
+  }
+  render_doc_window(
+    cb,
+    ed.blocks,
+    lo,
+    hi,
+    cache_units.val[lo],
+    ed.sel,
+    reg_unit,
+    reg_box,
+    reg_token,
+  )
+  if hi < n {
+    cb.div()
+    let rest = cum[n] - cum[hi]
+    cb.set_size(1.0, rest)
+    cb.set_flex(0.0, 0.0, rest)
+    cb.add_child()
+  }
   cb.add_child() // scroll → root
   cb.set_root()
   @gpui.build_tree(view, cb)

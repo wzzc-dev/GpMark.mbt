@@ -3,20 +3,15 @@
 
 ///|
 pub fn serialize_doc(blocks : Array[Block]) -> String {
-  let mut out = ""
-  let mut first = true
+  let parts : Array[String] = []
   for b in blocks {
-    if first {
-      out = serialize_block(b)
-      first = false
-    } else {
-      out = out + "\n\n" + serialize_block(b)
-    }
+    parts.push(serialize_block(b))
   }
-  if out == "" {
-    out
+  let body = parts.join("\n\n")
+  if body == "" {
+    ""
   } else {
-    out + "\n"
+    body + "\n"
   }
 }
 
@@ -34,7 +29,7 @@ pub fn serialize_block(b : Block) -> String {
     Quote(inner) =>
       prefix_lines(trim_trailing_newline(serialize_doc(inner)), ">")
     ListBlock(kind, items) => {
-      let mut out = ""
+      let parts : Array[String] = []
       let mut idx = 0
       for it in items {
         let marker = match kind {
@@ -55,26 +50,31 @@ pub fn serialize_block(b : Block) -> String {
               "  ",
             )
         }
-        out = if out == "" { item_src } else { out + "\n" + item_src }
+        parts.push(item_src)
         idx = idx + 1
       }
-      out
+      parts.join("\n")
     }
     TableBlock(t) => {
       let cols = if t.rows.length() > 0 { t.rows[0].length() } else { 0 }
       let sep = "| " + join_cells_str(repeat_arr_str("---", cols)) + " |"
-      let mut out = ""
-      let mut ri = 0
+      let lines : Array[String] = []
       for row in t.rows {
-        let parts : Array[String] = []
+        let cells : Array[String] = []
         for cell in row {
-          parts.push(inline_src(cell))
+          cells.push(inline_src(cell))
         }
-        let line = "| " + join_cells_str(parts) + " |"
-        out = if ri == 0 { line + "\n" + sep } else { out + "\n" + line }
-        ri = ri + 1
+        lines.push("| " + join_cells_str(cells) + " |")
       }
-      out
+      if lines.length() == 0 {
+        ""
+      } else {
+        let all : Array[String] = [lines[0], sep]
+        for i = 1; i < lines.length(); i = i + 1 {
+          all.push(lines[i])
+        }
+        all.join("\n")
+      }
     }
     ImageBlock(alt, url) => "![" + alt + "](" + url + ")"
     Hr => "---"
@@ -116,11 +116,11 @@ fn trim_trailing_ws(s : String) -> String {
 
 ///|
 pub fn inline_src(ns : Array[Inline]) -> String {
-  let mut out = ""
+  let parts : Array[String] = []
   for n in ns {
-    out = out + inline1_src(n)
+    parts.push(inline1_src(n))
   }
-  out
+  parts.join("")
 }
 
 ///|

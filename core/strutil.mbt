@@ -47,11 +47,7 @@ pub fn replace_all_str(s : String, old : StringView, new : String) -> String {
 
 ///|
 pub fn concat_str(parts : Array[String]) -> String {
-  let mut out = ""
-  for p in parts {
-    out = out + p
-  }
-  out
+  parts.join("")
 }
 
 ///|
@@ -80,17 +76,7 @@ pub fn split_lines_str(s : String) -> Array[String] {
 
 ///|
 pub fn join_lines_str(lines : Array[String]) -> String {
-  let mut out = ""
-  let mut first = true
-  for l in lines {
-    if first {
-      out = l
-      first = false
-    } else {
-      out = out + "\n" + l
-    }
-  }
-  out
+  lines.join("\n")
 }
 
 ///|
@@ -104,17 +90,7 @@ pub fn repeat_str(s : String, n : Int) -> String {
 
 ///|
 fn join_cells_str(parts : Array[String]) -> String {
-  let mut out = ""
-  let mut first = true
-  for p in parts {
-    if first {
-      out = p
-      first = false
-    } else {
-      out = out + " | " + p
-    }
-  }
-  out
+  parts.join(" | ")
 }
 
 ///|

@@ -515,12 +515,146 @@ pub fn render_doc(
   rbox : (Int) -> Int,
   rtok : (Int, Int) -> Int,
 ) -> Unit {
+  render_doc_window(cb, blocks, 0, blocks.length(), 0, sel, reg, rbox, rtok)
+}
+
+///|
+/// 窗口化渲染：blocks[lo..hi)，cur 从 cur0 起算。app.rebuild 只提交可视
+/// 窗口（上下留 overscan），窗口外块由 app 层的两个 spacer div 撑出滚动
+/// 行程；全树提交会让 GPUI 对整个文档做 layout，成本随总块数线性增长。
+pub fn render_doc_window(
+  cb : @gpui.CommandBuffer,
+  blocks : Array[@core.Block],
+  lo : Int,
+  hi : Int,
+  cur0 : Int,
+  sel : @core.Sel,
+  reg : (Int) -> Int,
+  rbox : (Int) -> Int,
+  rtok : (Int, Int) -> Int,
+) -> Unit {
   let sel_a = @core.sel_start(sel)
   let sel_b = @core.sel_end(sel)
-  let mut cur = 0
-  for i = 0; i < blocks.length(); i = i + 1 {
+  let mut cur = cur0
+  for i = lo; i < hi; i = i + 1 {
     render_slot(cb, blocks[i], cur, sel_a, sel_b, reg, rbox, rtok, base_avail)
     cur = cur + count_units_of(blocks[i])
+  }
+}
+
+// --- 高度估算（虚拟窗口）----------------------------------------------------
+// 与渲染共用同一个折行估算器（textlayout::layout_text），各块类型的附加
+// 常数与 render_block 的分支一一对应，spacer 高度因此 ≈ 实际渲染高度
+// （宽度估算本身有 ±10% 级别出入，见 framework-gaps §4，滚动行程为近似）。
+
+fn line_h(size : Float) -> Float { size * 1.63 }
+
+fn text_rows(ns : Array[@core.Inline], size : Float, avail : Float) -> Int {
+  let n = layout_text(@core.inlines_plain(ns).to_array(), size, avail).rows.length()
+  if n == 0 { 1 } else { n }
+}
+
+///|
+/// 单块的渲染高度（含 render_slot 的非容器 padding），avail 为块级可用宽。
+pub fn estimate_slot_height(b : @core.Block, avail : Float) -> Float {
+  let inner = estimate_block_height(b, avail - 12.0)
+  match b {
+    @core.Quote(_) | @core.ListBlock(_, _) | @core.TableBlock(_) => inner
+    _ => inner + 4.0
+  }
+}
+
+fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
+  match b {
+    @core.Heading(l, inls) =>
+      Float::from_int(text_rows(inls, heading_size(l), avail)) * line_h(heading_size(l))
+    @core.Paragraph(inls) => Float::from_int(text_rows(inls, 15.0, avail)) * line_h(15.0)
+    @core.CodeBlock(lang, code) => {
+      let label : Float = if lang != "" { line_h(11.0) } else { 0.0 }
+      let lines = @core.split_lines_str(code).length()
+      let body : Float =
+        if lines == 0 { 22.0 } else { Float::from_int(lines) * line_h(13.5) }
+      label + 20.0 + body
+    }
+    @core.Quote(inner) => {
+      let mut h : Float = 12.0
+      for ib in inner {
+        h = h + estimate_slot_height(ib, avail - 28.0)
+      }
+      if inner.length() > 1 {
+        h = h + 4.0 * Float::from_int(inner.length() - 1)
+      }
+      h
+    }
+    @core.ListBlock(_, items) => {
+      let mut h : Float = 0.0
+      for it in items {
+        let mut item_h =
+          Float::from_int(text_rows(it.content, 15.0, avail - 30.0)) * line_h(15.0)
+        if item_h < line_h(15.0) {
+          item_h = line_h(15.0)
+        }
+        if it.children.length() > 0 {
+          item_h = item_h + 4.0
+          for ch in it.children {
+            item_h = item_h + estimate_slot_height(ch, avail - 22.0)
+          }
+          if it.children.length() > 1 {
+            item_h = item_h + 2.0 * Float::from_int(it.children.length() - 1)
+          }
+        }
+        h = h + item_h
+      }
+      if items.length() > 1 {
+        h = h + 2.0 * Float::from_int(items.length() - 1)
+      }
+      h
+    }
+    @core.TableBlock(t) => {
+      // 列宽推导与 render_block 的表格分支一致：内容估算宽夹到 [60, 360]。
+      let mut ncols = 0
+      for row in t.rows {
+        if row.length() > ncols {
+          ncols = row.length()
+        }
+      }
+      let colw : Array[Float] = []
+      for c = 0; c < ncols; c = c + 1 {
+        let mut w : Float = 60.0
+        for ri = 0; ri < t.rows.length(); ri = ri + 1 {
+          let row = t.rows[ri]
+          if c < row.length() {
+            let cw = cell_px(@core.inlines_plain(row[c]).to_array(), 14.0, t.has_header && ri == 0)
+            if cw > w {
+              w = cw
+            }
+          }
+        }
+        if w > 360.0 {
+          w = 360.0
+        }
+        colw.push(w)
+      }
+      let mut h : Float = 0.0
+      for row in t.rows {
+        let mut rh : Float = 0.0
+        for ci = 0; ci < row.length(); ci = ci + 1 {
+          let cell_h =
+            Float::from_int(text_rows(row[ci], 14.0, colw[ci] - 24.0)) * line_h(14.0) + 8.0
+          if cell_h > rh {
+            rh = cell_h
+          }
+        }
+        h = h + rh
+      }
+      h
+    }
+    @core.ImageBlock(_, _) => line_h(16.0)
+    @core.Hr => 14.0
+    @core.Raw(_) => {
+      let cs = @core.block_plain(b).to_array()
+      Float::from_int(layout_text(cs, 13.0, avail).rows.length()).max(1.0) * line_h(13.0)
+    }
   }
 }
 
@@ -708,7 +842,7 @@ fn render_block(
             clo,
             chi,
             14.0,
-            (colw[ci] - 24).to_float(),
+            Float::from_int(colw[ci] - 24),
             c2,
             rtok,
             t.has_header && ri == 0,

@@ -27,11 +27,11 @@ pub fn inline_plain(n : Inline) -> String {
 
 ///|
 pub fn inlines_plain(ns : Array[Inline]) -> String {
-  let mut out = ""
+  let parts : Array[String] = []
   for n in ns {
-    out = out + inline_plain(n)
+    parts.push(inline_plain(n))
   }
-  out
+  parts.join("")
 }
 
 ///|

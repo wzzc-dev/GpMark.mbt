@@ -69,9 +69,5 @@ pub fn block_is_atomic(b : Block) -> Bool {
 
 ///|
 fn concat_plain(xs : Array[String]) -> String {
-  let mut out = ""
-  for x in xs {
-    out = out + x
-  }
-  out
+  xs.join("")
 }

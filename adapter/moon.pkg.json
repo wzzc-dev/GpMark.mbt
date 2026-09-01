@@ -1,0 +1,6 @@
+{
+  "import": [
+    { "path": "mdmbt/editor/core", "alias": "core" },
+    { "path": "nakake/gpui-bindings", "alias": "gpui" }
+  ]
+}

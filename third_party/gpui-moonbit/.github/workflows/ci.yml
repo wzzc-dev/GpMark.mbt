@@ -1,0 +1,245 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    env:
+      # 90% of the bytes in a dev-profile rlib here are `.debug*` sections
+      # (libgpui alone: 236 MB, 120 MB of it debug info). CI never reads a
+      # backtrace's line numbers, and dropping the debug info cuts codegen,
+      # link time, and the artifact cache below on all three runners. Raise to
+      # 1 if a panicking test ever needs line info.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      # Every CI job starts from a restored cache and builds once; incremental
+      # state buys nothing and only inflates what rust-cache has to store.
+      CARGO_INCREMENTAL: 0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The installers always fetch `latest` and cli.moonbitlang.com exposes no
+      # version endpoint, but the release asset's ETag changes on every release.
+      # Keying the toolchain cache on it means a new MoonBit release misses the
+      # cache and reinstalls, so CI keeps tracking the latest toolchain rather
+      # than freezing on whatever we happened to cache first. That matters here:
+      # build.sh derives the MoonBit callback's mangled symbol from the
+      # toolchain's actual output, so a mangling change upstream must reach CI.
+      - name: Resolve latest MoonBit release
+        id: moonbit
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)     asset=moonbit-linux-x86_64.tar.gz ;;
+            Linux-ARM64)   asset=moonbit-linux-aarch64.tar.gz ;;
+            macOS-ARM64)   asset=moonbit-darwin-aarch64.tar.gz ;;
+            macOS-X64)     asset=moonbit-darwin-x86_64.tar.gz ;;
+            Windows-X64)   asset=moonbit-windows-x86_64.zip ;;
+            *)
+              echo "ERROR: no MoonBit asset mapped for ${{ runner.os }}-${{ runner.arch }}" >&2
+              exit 1
+              ;;
+          esac
+          etag="$(curl -fsSI "https://cli.moonbitlang.com/binaries/latest/$asset" \
+            | tr -d '\r' | awk 'tolower($1) == "etag:" { print $2 }' | tr -d '"')"
+          if [ -z "$etag" ]; then
+            echo "ERROR: could not resolve the MoonBit release ETag for $asset" >&2
+            exit 1
+          fi
+          echo "    $asset -> $etag"
+          echo "release=$etag" >> "$GITHUB_OUTPUT"
+
+      - name: Cache MoonBit toolchain
+        id: moon-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.moon
+          key: moon-${{ runner.os }}-${{ runner.arch }}-${{ steps.moonbit.outputs.release }}
+
+      - name: Install MoonBit toolchain (Unix)
+        if: runner.os != 'Windows' && steps.moon-cache.outputs.cache-hit != 'true'
+        run: curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+
+      - name: Install MoonBit toolchain (Windows)
+        if: runner.os == 'Windows' && steps.moon-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+
+      # Separate from the install steps: PATH has to be set on the cache-hit
+      # path too, where no installer runs.
+      - name: Add MoonBit to PATH (Unix)
+        if: runner.os != 'Windows'
+        run: echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Add MoonBit to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "$env:USERPROFILE\.moon\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cargo.lock resolves to ~740 packages (gpui pulls in blade, naga, resvg,
+      # rustls, image, rav1e, …), and without a cache every job rebuilt all of
+      # them from scratch on all three runners. The three crates below each have
+      # their own target dir; build.sh drives all of them.
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            gpui-sys
+            gen-header
+            bindgen-moonbit
+
+      - name: Install XCB/XKB development libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libc6-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+
+      - name: Cold build (Unix)
+        if: runner.os != 'Windows'
+        run: ./build.sh
+
+      - name: Verify .app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          test -x dist/Runner.app/Contents/MacOS/Runner
+          plutil -lint dist/Runner.app/Contents/Info.plist
+
+      - name: Cold build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Rust unit tests
+        working-directory: gpui-sys
+        env:
+          GPUI_SYS_ALLOW_TEST_DISPATCH_STUB: "1"
+        run: cargo test --features test-dispatch-stub
+
+      # G26: compile the criterion bench harness without running it (benches
+      # are not run in CI). `--no-run` only builds; `required-features` means a
+      # bare `cargo bench` would skip the target, so we pass the features
+      # explicitly. Linux-only to keep the compile off the slower runners.
+      #
+      # `--profile dev` matters: the bench profile inherits release, so the
+      # default here rebuilt the entire dependency graph a second time (391s of
+      # a 14-min job). In dev it reuses everything the `cargo test` step above
+      # already built under the same feature set, leaving only gpui-sys itself
+      # to compile. We are checking that the harness compiles and links, which
+      # the dev profile establishes just as well.
+      - name: Bench compile check (Linux)
+        if: runner.os == 'Linux'
+        working-directory: gpui-sys
+        env:
+          GPUI_SYS_ALLOW_TEST_DISPATCH_STUB: "1"
+        run: cargo bench --no-run --profile dev --features test-dispatch-stub,test-support
+
+      # Verifies the prebuild path (#103): a separate module that path-depends
+      # on moonbit-bindings and imports the link-only package, so build.py's
+      # LinkConfig is the ONLY thing that makes the final link resolve. Runs
+      # before `moon test` so a link regression is reported here, where the
+      # failure points at the right thing.
+      - name: Consumer smoke test (Unix)
+        if: runner.os != 'Windows'
+        working-directory: tests/consumer
+        run: |
+          moon build
+          ./_build/native/debug/build/main/main.exe
+
+      - name: Consumer smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: tests/consumer
+        run: |
+          moon build
+          if ($LASTEXITCODE -ne 0) { throw 'moon build failed' }
+          & .\_build\native\debug\build\main\main.exe
+          if ($LASTEXITCODE -ne 0) { throw 'consumer smoke test failed' }
+
+      # The examples are separate modules that path-depend on the library
+      # (#125, RFC 0004), so building them is the standing regression test for
+      # "a consumer can write their own app": each registers its own dispatch
+      # into the library-owned entry point and links its own executable. This
+      # replaces the type-check coverage the in-module `moon test -p …/app` and
+      # `-p …/examples/*` used to give.
+      #
+      # Build only — `run_window` blocks in the GPUI event loop and CI has no
+      # display. `moon test` runs for counter alone: the Counter demo's unit
+      # tests moved out of the library module with it, and hello / stream have
+      # none.
+      - name: Examples build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          for example in counter hello stream; do
+            (cd "examples/$example" && moon build)
+          done
+          cd examples/counter && moon test
+
+      - name: Examples build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($example in 'counter', 'hello', 'stream') {
+            Push-Location "examples/$example"
+            moon build
+            if ($LASTEXITCODE -ne 0) { throw "moon build failed for example $example" }
+            Pop-Location
+          }
+          Push-Location examples/counter
+          moon test
+          if ($LASTEXITCODE -ne 0) { throw 'moon test failed for example counter' }
+          Pop-Location
+
+      - name: MoonBit tests (Unix)
+        if: runner.os != 'Windows'
+        working-directory: moonbit-bindings
+        run: moon test
+
+      # The `link` package is excluded on Windows. moon applies its prebuild
+      # LinkConfig twice when building that package's own blackbox test (once
+      # for `link`, once for `link_blackbox_test` — both resolve to the same
+      # link/moon.pkg), so every .lib lands on the command line twice. That is
+      # harmless for ld, but MSVC fails with `CVTRES: CVT1100 duplicate
+      # resource type:MANIFEST` → LNK1123. The package holds no tests (it
+      # exists only as the LinkConfig target) and consumers never build its
+      # blackbox test, so nothing is lost. The real Windows link coverage is
+      # the consumer smoke test above.
+      - name: MoonBit tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: moonbit-bindings
+        run: >-
+          moon test
+          -p nakake/gpui-bindings
+          -p nakake/gpui-bindings/cmd/main
+          -p nakake/gpui-bindings/cmd/roundtrip
+
+      - name: Rebuild after Rust-only change (Unix)
+        if: runner.os != 'Windows'
+        run: touch gpui-sys/src/lib.rs && ./build.sh
+
+      - name: Rebuild after Rust-only change (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          (Get-Item gpui-sys\src\lib.rs).LastWriteTime = Get-Date
+          .\build.ps1

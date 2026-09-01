@@ -1,0 +1,160 @@
+abi_version = 4
+
+[events]
+EVENT_CLICK = 1
+EVENT_KEY = 2
+EVENT_TEXT = 3
+EVENT_NAMED_KEY = 4
+EVENT_ASYNC = 5
+EVENT_INPUT_CHANGED = 6
+EVENT_INPUT_SUBMIT = 7
+EVENT_SCROLL = 8
+
+[modifiers]
+MOD_CTRL = 1
+MOD_ALT = 2
+MOD_SHIFT = 4
+MOD_PLATFORM = 8
+MOD_FUNCTION = 16
+
+[named_keys]
+KEY_ENTER = 1
+KEY_ESCAPE = 2
+KEY_UP = 3
+KEY_DOWN = 4
+KEY_LEFT = 5
+KEY_RIGHT = 6
+KEY_TAB = 7
+KEY_BACKSPACE = 8
+KEY_DELETE = 9
+KEY_HOME = 10
+KEY_END = 11
+KEY_PAGEUP = 12
+KEY_PAGEDOWN = 13
+
+[opcodes]
+OP_DIV = 1
+OP_TEXT = 2
+OP_SET_SIZE = 3
+OP_SET_BG = 4
+OP_SET_FLEX = 5
+OP_SET_CENTER = 6
+OP_SET_GAP = 7
+OP_SET_ROUNDED = 8
+OP_SET_ON_CLICK = 9
+OP_SET_KEY = 10
+OP_ADD_CHILD = 11
+OP_SET_ROOT = 12
+OP_SET_PADDING = 13
+OP_SET_BORDER = 14
+OP_SET_BG_COLOR = 15
+OP_SET_MARGIN = 16
+OP_SET_MIN_SIZE = 17
+OP_SET_MAX_SIZE = 18
+OP_SET_FLEX_ITEM = 19
+OP_SET_ALIGN = 20
+OP_SET_OVERFLOW = 21
+OP_SET_OPACITY = 22
+OP_SET_SHADOW = 23
+OP_SET_CURSOR = 24
+OP_SET_POSITION = 25
+OP_SET_INSET = 26
+OP_SET_PADDING_SIDES = 27
+OP_SET_TEXT_SIZE = 28
+OP_SET_TEXT_COLOR = 29
+OP_SET_FONT_WEIGHT = 30
+OP_SET_LINE_HEIGHT = 31
+OP_SET_TEXT_ALIGN = 32
+OP_SET_WHITESPACE = 33
+OP_SET_FONT_FAMILY = 34
+OP_SET_FOCUSABLE = 35
+OP_SET_TAB_INDEX = 36
+OP_SET_TAB_STOP = 37
+OP_TEXT_INPUT = 38
+OP_TEXT_RUN = 39
+OP_SET_SCROLL_ID = 40
+
+# G7 style enum values. These are operand values (not opcodes); they share the
+# same constant-generation + cross-boundary drift guard as the opcodes above so
+# the Rust decoder and the MoonBit encoder can never disagree on the mapping.
+# transform is intentionally absent: gpui 0.2.2 has no Style-level transform.
+
+[align_items]
+ALIGN_DEFAULT = 0
+ALIGN_START = 1
+ALIGN_CENTER = 2
+ALIGN_END = 3
+ALIGN_STRETCH = 4
+
+[justify_content]
+JUSTIFY_DEFAULT = 0
+JUSTIFY_START = 1
+JUSTIFY_CENTER = 2
+JUSTIFY_END = 3
+JUSTIFY_SPACE_BETWEEN = 4
+JUSTIFY_SPACE_AROUND = 5
+
+[overflow]
+OVERFLOW_VISIBLE = 0
+OVERFLOW_HIDDEN = 1
+OVERFLOW_SCROLL = 2
+
+[cursor]
+CURSOR_ARROW = 0
+CURSOR_POINTER = 1
+CURSOR_TEXT = 2
+CURSOR_CROSSHAIR = 3
+CURSOR_GRAB = 4
+CURSOR_GRABBING = 5
+CURSOR_NOT_ALLOWED = 6
+CURSOR_EW_RESIZE = 7
+CURSOR_NS_RESIZE = 8
+CURSOR_COL_RESIZE = 9
+CURSOR_ROW_RESIZE = 10
+CURSOR_NONE = 11
+
+[position]
+POSITION_RELATIVE = 0
+POSITION_ABSOLUTE = 1
+
+[text_align]
+TEXT_ALIGN_DEFAULT = 0
+TEXT_ALIGN_LEFT = 1
+TEXT_ALIGN_CENTER = 2
+TEXT_ALIGN_RIGHT = 3
+TEXT_ALIGN_JUSTIFY = 4
+
+[whitespace]
+WHITESPACE_DEFAULT = 0
+WHITESPACE_NORMAL = 1
+WHITESPACE_NOWRAP = 2
+WHITESPACE_PRE = 3
+WHITESPACE_PRE_WRAP = 4
+
+# OP_TEXT_RUN style-presence bitflags (issue #91). Fields absent from the flags
+# byte keep the run on the base text style, so a run record always carries every
+# operand slot and the flags decide which ones apply.
+
+[run_style]
+RUN_STYLE_COLOR = 1
+RUN_STYLE_WEIGHT = 2
+RUN_STYLE_ITALIC = 4
+RUN_STYLE_UNDERLINE = 8
+RUN_STYLE_STRIKETHROUGH = 16
+RUN_STYLE_BACKGROUND = 32
+
+[buffer]
+BUFFER_VERSION = 1
+
+[callback]
+# Library-owned entry point in the root package `nakake/gpui-bindings`
+# (RFC 0004). The build drivers derive the mangled symbol tail from this name.
+name = "dispatch_entry"
+# MoonBit module that owns the entry point. With `name`, this is everything
+# needed to compute the mangled symbol deterministically, which is what lets
+# `gpui-sys` build without `mb_symbol.txt` (i.e. when consumed from a registry
+# rather than from this checkout). Kept here so build.rs and build.py derive it
+# from one declaration instead of each hardcoding the module path.
+module = "nakake/gpui-bindings"
+params = ["i32", "i32", "i32", "i32", "i32"]
+return = "i32"

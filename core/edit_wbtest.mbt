@@ -1,0 +1,275 @@
+///|
+/// 编辑内核与 undo/redo 测试。
+fn cs(unit : Int, offset : Int) -> Sel {
+  collapsed_sel(Caret::{ unit, offset })
+}
+
+///|
+fn plain_doc(bs : Array[Block]) -> Array[String] {
+  bs.map(block_plain)
+}
+
+///|
+test "插入纯文本并继承左侧样式" {
+  let bs0 = parse_doc("**bold**tail\n")
+  let (bs, s) = doc_insert(bs0, cs(0, 4), "X")
+  match bs[0] {
+    Paragraph(ns) =>
+      assert_eq(ns, [
+        Run("boldX", Marks::{
+          bold: true,
+          italic: false,
+          strike: false,
+          code: false,
+        }),
+        Run("tail", Marks::{
+          bold: false,
+          italic: false,
+          strike: false,
+          code: false,
+        }),
+      ])
+    _ => fail("expect paragraph")
+  }
+  assert_eq(s, cs(0, 5))
+}
+
+///|
+test "Enter 拆分段落的 / 标题" {
+  let bs0 = parse_doc("hello world\n")
+  let (bs, s) = doc_enter(bs0, cs(0, 5))
+  assert_eq(plain_doc(bs), ["hello", " world"])
+  assert_eq(s, cs(1, 0))
+
+  let h0 = parse_doc("## a b\n")
+  let (h, hs) = doc_enter(h0, cs(0, 1))
+  assert_eq(plain_doc(h), ["a", " b"])
+  assert_eq(hs, cs(1, 0))
+  match h[1] {
+    Paragraph(_) => ()
+    _ => fail("second half should be paragraph")
+  }
+}
+
+///|
+test "Backspace 合并跨块 / 删除原子块" {
+  let bs0 = parse_doc("one\n\ntwo\n")
+  let (bs, s) = doc_backspace(bs0, cs(1, 0))
+  assert_eq(plain_doc(bs), ["onetwo"])
+  assert_eq(s, cs(0, 3))
+
+  let ir0 = parse_doc("para\n\n---\n")
+  let (ir, is_) = doc_backspace(ir0, cs(1, 0)) // 光标在 Hr 单元开头 → 删除 Hr
+  assert_eq(plain_doc(ir), ["para"])
+  assert_eq(is_, cs(0, 4))
+}
+
+///|
+test "Backspace 删除空列表项" {
+  let bs0 = parse_doc("- a\n- \n")
+  // 光标在第二项开头
+  let (bs, _) = doc_backspace(bs0, cs(1, 0))
+  assert_eq(bs.length(), 1)
+  match bs[0] {
+    ListBlock(Bullet, items) => {
+      assert_eq(items.length(), 1)
+      assert_eq(inlines_plain(items[0].content), "a")
+    }
+    _ => fail("expect single-item bullet list")
+  }
+}
+
+///|
+test "Enter 拆分列表项" {
+  let bs0 = parse_doc("- ab\n")
+  let (bs, s) = doc_enter(bs0, cs(0, 1))
+  match bs[0] {
+    ListBlock(Bullet, items) => {
+      assert_eq(items.length(), 2)
+      assert_eq(inlines_plain(items[0].content), "a")
+      assert_eq(inlines_plain(items[1].content), "b")
+    }
+    _ => fail("expect bullet list")
+  }
+  assert_eq(s, cs(1, 0))
+
+  let t0 = parse_doc("- [x] ab\n")
+  let (t, _) = doc_enter(t0, cs(0, 1))
+  match t[0] {
+    ListBlock(Task, items) => assert_eq(items[1].checked, Some(false))
+    _ => fail("expect task list")
+  }
+}
+
+///|
+test "Delete 向前删除与跨单元删除" {
+  let bs0 = parse_doc("ab\n\ncd\n")
+  let (bs, s) = doc_delete_forward(bs0, Caret::{ unit: 0, offset: 0 })
+  assert_eq(plain_doc(bs), ["b", "cd"])
+  assert_eq(s, cs(0, 0))
+
+  // 单元末尾 Delete → 合并下一单元
+  let (m, _) = doc_delete_forward(bs0, Caret::{ unit: 0, offset: 2 })
+  assert_eq(plain_doc(m), ["abcd"])
+}
+
+///|
+test "跨单元选区删除" {
+  let bs0 = parse_doc("one\n\ntwo\n\nthree\n")
+  let sel = Sel::{
+    anchor: Caret::{ unit: 0, offset: 2 },
+    focus: Caret::{ unit: 2, offset: 1 },
+  }
+  let (bs, s) = doc_delete(bs0, sel)
+  assert_eq(plain_doc(bs), ["onhree"])
+  assert_eq(s, Caret::{ unit: 0, offset: 2 })
+
+  let (bs2, _) = doc_insert(bs, collapsed_sel(s), "!")
+  assert_eq(plain_doc(bs2), ["on!hree"])
+}
+
+///|
+test "代码块编辑走 set_plain" {
+  let bs0 = parse_doc("```py\nprint\n```\n")
+  let (bs, s) = doc_insert(bs0, cs(0, 5), "()")
+  assert_eq(bs[0], CodeBlock("py", "print()"))
+  assert_eq(s, cs(0, 7))
+  let (bd, _) = doc_backspace(bs, cs(0, 7))
+  assert_eq(bd[0], CodeBlock("py", "print("))
+}
+
+///|
+test "样式切换 bold 双向" {
+  let bs0 = parse_doc("hello\n")
+  let sel = Sel::{
+    anchor: Caret::{ unit: 0, offset: 0 },
+    focus: Caret::{ unit: 0, offset: 5 },
+  }
+  let bold_upd = fn(m : Marks) {
+    Marks::{ bold: !m.bold, italic: m.italic, strike: m.strike, code: m.code }
+  }
+  let (b1, _) = doc_toggle_mark(bs0, sel, bold_upd)
+  assert_eq(
+    b1[0],
+    Paragraph([
+      Run("hello", Marks::{
+        bold: true,
+        italic: false,
+        strike: false,
+        code: false,
+      }),
+    ]),
+  )
+  let (b2, _) = doc_toggle_mark(b1, sel, bold_upd)
+  assert_eq(b2, bs0)
+
+  // 部分选区只影响覆盖的 run 片段
+  let bs3 = parse_doc("hello\n")
+  let sel2 = Sel::{
+    anchor: Caret::{ unit: 0, offset: 0 },
+    focus: Caret::{ unit: 0, offset: 2 },
+  }
+  let (b3, _) = doc_toggle_mark(bs3, sel2, bold_upd)
+  match b3[0] {
+    Paragraph(ns) => {
+      assert_eq(ns.length(), 2)
+      assert_eq(marks_of(ns[0]).bold, true)
+      assert_eq(marks_of(ns[1]).bold, false)
+    }
+    _ => fail("expect paragraph")
+  }
+}
+
+///|
+test "光标移动与选区扩展" {
+  let bs = parse_doc("ab\n\ncd\n")
+  let start = cs(0, 0)
+  assert_eq(doc_move(bs, start, Right, false), cs(0, 1))
+  assert_eq(doc_move(bs, cs(0, 2), Right, false), cs(1, 0)) // 跨单元
+  assert_eq(doc_move(bs, cs(1, 1), Left, false), cs(1, 0))
+  assert_eq(doc_move(bs, cs(0, 1), Up, false), cs(0, 1)) // 顶单元 Up 不动
+  assert_eq(doc_move(bs, cs(0, 1), Down, false), cs(1, 1))
+  assert_eq(doc_move(bs, cs(1, 2), Home, false), cs(1, 0))
+  assert_eq(doc_move(bs, cs(0, 0), End, false), cs(0, 2))
+  // 扩展选区
+  let ext = doc_move(bs, cs(0, 0), Right, true)
+  assert_eq(ext.anchor, cs(0, 0).focus)
+  assert_eq(ext.focus, cs(0, 1).focus)
+  let all = doc_select_all(bs)
+  assert_eq(all.anchor, Caret::{ unit: 0, offset: 0 })
+  assert_eq(all.focus, Caret::{ unit: 1, offset: 2 })
+}
+
+///|
+test "块级类型转换" {
+  let bs0 = parse_doc("text\n")
+  let (h1, _) = doc_block_op(bs0, cs(0, 0), SetHeading(2))
+  assert_eq(plain_doc(h1), ["text"])
+  match h1[0] {
+    Heading(2, _) => ()
+    _ => fail("expect h2")
+  }
+  let (h2, _) = doc_block_op(h1, cs(0, 0), SetHeading(2)) // 同级 → 转回段落
+  match h2[0] {
+    Paragraph(_) => ()
+    _ => fail("expect paragraph back")
+  }
+  let (l1, _) = doc_block_op(bs0, cs(0, 0), ToggleBullet)
+  match l1[0] {
+    ListBlock(Bullet, items) => assert_eq(items.length(), 1)
+    _ => fail("expect bullet")
+  }
+  let (l2, _) = doc_block_op(l1, cs(0, 0), ToggleBullet)
+  match l2[0] {
+    Paragraph(_) => ()
+    _ => fail("expect paragraph back")
+  }
+}
+
+///|
+test "undo / redo 快照" {
+  let bs0 = parse_doc("start\n")
+  let ed = Editor::new(bs0)
+  assert_eq(ed.can_undo(), false)
+  ed.apply(fn(b, s) { doc_insert(b, s, "!!") })
+  assert_eq(plain_doc(ed.blocks), ["!!start"])
+  assert_eq(ed.can_undo(), true)
+  ed.undo()
+  assert_eq(plain_doc(ed.blocks), ["start"])
+  assert_eq(ed.can_redo(), true)
+  ed.redo()
+  assert_eq(plain_doc(ed.blocks), ["!!start"])
+  // 新编辑清空 redo 栈
+  ed.undo()
+  ed.apply(fn(b, s) { doc_insert(b, s, "?") })
+  assert_eq(ed.can_redo(), false)
+  assert_eq(plain_doc(ed.blocks), ["?start"])
+}
+
+///|
+test "undo 恢复选区" {
+  let bs0 = parse_doc("abc\n")
+  let ed = Editor::new(bs0)
+  ed.set_sel(cs(0, 3))
+  ed.apply(fn(b, s) { doc_insert(b, s, "d") })
+  assert_eq(ed.sel, cs(0, 4))
+  ed.undo()
+  assert_eq(ed.sel, cs(0, 3))
+  assert_eq(plain_doc(ed.blocks), ["abc"])
+}
+
+///|
+test "编辑后文档仍可序列化且再解析稳定" {
+  let bs0 = parse_doc("# t\n\nbody\n")
+  let (bs, _) = doc_insert(bs0, cs(1, 4), " tail")
+  let src = serialize_doc(bs)
+  assert_eq(parse_doc(src), bs)
+}
+
+///|
+fn marks_of(n : Inline) -> Marks {
+  match n {
+    Run(_, m) => m
+    _ => Marks::default()
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "mdmbt/editor",
+  "version": "0.1.0",
+  "description": "Markdown WYSIWYG editor core in MoonBit on GPUI (via nakake/gpui-bindings)",
+  "source": ".",
+  "deps": {
+    "nakake/gpui-bindings": {
+      "path": "./third_party/gpui-moonbit/moonbit-bindings"
+    }
+  },
+  "preferred-target": "native"
+}

@@ -4,7 +4,32 @@
 
 ///|
 ///|
+fn now_ms() -> Double {
+  @env.now().reinterpret_as_int64().to_double()
+}
+
+///|
 fn main {
+  let args = @env.args()
+  // md_editor gpui2 适配器协议：--benchmark 为 headless-render 诊断行，
+  // --ui-benchmark 为真实窗口 ui-frame 帧循环（Rust 侧打印 JSON 后退出）。
+  if args.length() >= 4 && args[1] == "--benchmark" {
+    @mdmbt/editor/adapter.run_headless_benchmark(args[2], args[3])
+    return
+  }
+  if args.length() >= 4 && args[1] == "--ui-benchmark" {
+    let load_started = now_ms()
+    let source = @fs.read_file_to_string(args[2]) catch {
+      _ => abort("gpui2 benchmark fixture is unreadable")
+    }
+    @nakake/gpui-bindings.register_dispatch(@mdmbt/editor/adapter.dispatch)
+    @mdmbt/editor/adapter.run_ui_benchmark(
+      source,
+      args[3],
+      (now_ms() - load_started).max(0.0),
+    )
+    return
+  }
   @nakake/gpui-bindings.register_dispatch(@mdmbt/editor/adapter.dispatch)
   @mdmbt/editor/adapter.load(@mdmbt/editor/adapter.demo_sample())
   @nakake/gpui-bindings.expect_ok(

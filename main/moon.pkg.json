@@ -3,7 +3,9 @@
   "import": [
     "nakake/gpui-bindings",
     "nakake/gpui-bindings/link",
-    "mdmbt/editor/adapter"
+    "mdmbt/editor/adapter",
+    "moonbitlang/core/env",
+    "moonbitlang/x/fs"
   ],
   "warn-list": "-29"
 }

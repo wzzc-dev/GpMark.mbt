@@ -1,6 +1,8 @@
 {
   "import": [
     { "path": "mdmbt/editor/core", "alias": "core" },
-    { "path": "nakake/gpui-bindings", "alias": "gpui" }
+    { "path": "nakake/gpui-bindings", "alias": "gpui" },
+    "moonbitlang/core/env",
+    "moonbitlang/x/fs"
   ]
 }

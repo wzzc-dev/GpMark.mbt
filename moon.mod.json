@@ -6,7 +6,8 @@
   "deps": {
     "nakake/gpui-bindings": {
       "path": "./third_party/gpui-moonbit/moonbit-bindings"
-    }
+    },
+    "moonbitlang/x": "0.5.1"
   },
   "preferred-target": "native"
 }

@@ -5,7 +5,7 @@
 # 便于调试。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-EXE="$ROOT/_build/native/debug/build/main/main.exe"
+EXE="$ROOT/_build/native/debug/build/mdmbt/main/main.exe"
 APP="$ROOT/dist/MdMbt.app"
 
 if [ ! -f "$EXE" ]; then

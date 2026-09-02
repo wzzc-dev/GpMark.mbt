@@ -50,8 +50,7 @@ fn main {
   }
   if !opened {
     @mdmbt/adapter.load(@mdmbt/adapter.demo_sample())
-    // demo 启动即展开打开文件路径栏（~/ 前缀就绪，直接敲路径或 Esc 关掉）
-    @mdmbt/adapter.show_open_dialog()
+    // 打开文件走系统文件选择框（顶栏 Open / Cmd+O），启动不自动弹对话框。
   }
   @nakake/gpui-bindings.expect_ok(
     @mdmbt/adapter.build_tree(0),

@@ -1,63 +1,6 @@
-/// 打开/保存文件（Cmd+O 路径栏状态机 + open_path/save_current_file）
-/// 的纯逻辑单测。fs 调用走真实文件系统（临时文件在 /tmp），不触 FFI。
-
-fn bytes_has(hay : Bytes, needle : String) -> Bool {
-  let n = @utf8.encode(needle)
-  let hl = hay.length() - n.length()
-  let mut i = 0
-  while i <= hl {
-    let mut j = 0
-    while j < n.length() && hay[i + j] == n[j] {
-      j = j + 1
-    }
-    if j == n.length() {
-      return true
-    }
-    i = i + 1
-  }
-  false
-}
-
-///|
-test "路径栏状态机：Cmd+O 开 / 键入 / 退格 / Esc 关 / 再按 Cmd+O 关" {
-  load(demo_sample())
-  assert_false(dialog_open.val)
-  // Cmd+O 打开；keydown 后框架会补发一条同字符 TEXT（os 行为），先吞掉
-  on_key('o'.to_int(), @gpui.MOD_PLATFORM)
-  assert_true(dialog_open.val)
-  assert_true(path_buf.val == "~/")
-  on_text("o") // 修饰键补发的字符事件：被吞，不进缓冲区
-  assert_true(path_buf.val == "~/")
-  on_text("tmp/x.m")
-  assert_true(path_buf.val == "~/tmp/x.m")
-  on_named_key(@gpui.KEY_BACKSPACE, 0)
-  assert_true(path_buf.val == "~/tmp/x.")
-  on_named_key(@gpui.KEY_ESCAPE, 0)
-  assert_false(dialog_open.val)
-  // 重开 → 再按 Cmd+O 直接关
-  on_key('o'.to_int(), @gpui.MOD_PLATFORM)
-  on_text("o")
-  assert_true(dialog_open.val)
-  on_key('o'.to_int(), @gpui.MOD_PLATFORM)
-  on_text("o")
-  assert_false(dialog_open.val)
-  let _ = open_path("/tmp") // 目录：path_exists 通过但读会失败——兜底 Err 路径
-}
-
-///|
-test "路径栏打开时吞掉编辑键，不动文档" {
-  load("# 固定\n\n正文\n")
-  let before = dump()
-  on_key('o'.to_int(), @gpui.MOD_PLATFORM)
-  on_text("o")
-  on_text("hello 世界")
-  assert_true(path_buf.val == "~/hello 世界")
-  on_named_key(@gpui.KEY_DOWN, 0) // 方向键被对话框吞掉
-  on_key('b'.to_int(), @gpui.MOD_PLATFORM) // 组合键被吞（Cmd+B 不生效）
-  on_text("b")
-  assert_true(dump() == before)
-  on_named_key(@gpui.KEY_ESCAPE, 0)
-}
+/// 打开/保存文件（系统文件选择框 + open_path/save_current_file）的纯逻辑
+/// 单测。fs 调用走真实文件系统（临时文件在 /tmp）；文件选择框 FFI 不在
+/// 单测中触发（会弹真对话框并阻塞进程），只测其下游 open_path。
 
 ///|
 test "open_path 失败路径给出可读错误" {
@@ -70,7 +13,7 @@ test "open_path 失败路径给出可读错误" {
     Err(e) => assert_true(e.contains("不存在"))
     Ok(_) => abort("missing file should fail")
   }
-  assert_false(dialog_open.val)
+  let _ = open_path("/tmp") // 目录：path_exists 通过但读会失败——兜底 Err 路径
 }
 
 ///|
@@ -84,7 +27,6 @@ test "open_path 读取替换文档；save_current_file 回写；tilde 展开" {
     Err(e) => abort("open_path failed: " + e)
   }
   assert_true(current_path() == path)
-  assert_false(dialog_open.val)
   assert_true(dump().contains("# 打开的文件"))
   assert_true(!dump().contains("md_mbt 编辑器演示"))
   // 打开后编辑 → 回写 → 磁盘内容含新增
@@ -116,31 +58,7 @@ test "open_path 读取替换文档；save_current_file 回写；tilde 展开" {
 }
 
 ///|
-test "show_open_dialog：main 启动默认展开，Esc 可关" {
-  load(demo_sample())
-  assert_false(dialog_open.val)
-  show_open_dialog()
-  assert_true(dialog_open.val)
-  assert_true(path_buf.val == "~/")
-  on_named_key(@gpui.KEY_ESCAPE, 0)
-  assert_false(dialog_open.val)
-}
-
 test "CRLF 归一化" {
   assert_true(normalize_eol("a\r\nb\rc\nd") == "a\nb\nc\nd")
   assert_true(normalize_eol("plain") == "plain")
-}
-
-///|
-test "路径栏渲染：命令缓冲字节含提示与路径" {
-  let cb = @gpui.CommandBuffer::new()
-  cb.div()
-  render_path_bar(cb, "/tmp/some.md", "文件不存在")
-  cb.add_child()
-  cb.set_root()
-  let bytes = cb.to_bytes()
-  assert_true(bytes.length() > 0)
-  assert_true(bytes_has(bytes, "打开文件"))
-  assert_true(bytes_has(bytes, "/tmp/some.md"))
-  assert_true(bytes_has(bytes, "文件不存在"))
 }

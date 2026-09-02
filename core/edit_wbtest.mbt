@@ -359,3 +359,31 @@ test "代码块语言循环" {
     _ => fail("code2")
   }
 }
+
+///|
+test "doc_selection_text：单单元/跨单元/空选区" {
+  let bs = parse_doc("hello 世界\n\nsecond para")
+  // 单元内选区（第 0 单元 offset 0..5）
+  let t1 = doc_selection_text(bs, mk_sel(0, 0, 0, 5))
+  assert_eq(t1, "hello")
+  // 跨单元：单元 0 全部到单元 1 前缀（单元间补换行）
+  let t2 = doc_selection_text(bs, mk_sel(0, 0, 1, 3))
+  assert_eq(t2, "hello 世界\nsec")
+  // 端点 unit 越界 = 钳到文档末尾
+  let t5 = doc_selection_text(bs, mk_sel(0, 0, 99, 0))
+  assert_eq(t5, "hello 世界\nsecond para")
+  // 空选区
+  let t3 = doc_selection_text(bs, mk_sel(1, 0, 1, 0))
+  assert_eq(t3, "")
+  // 反向选区（anchor 在后）
+  let t4 = doc_selection_text(bs, mk_sel(1, 3, 0, 0))
+  assert_eq(t4, "hello 世界\nsec")
+}
+
+///|
+fn mk_sel(au : Int, ao : Int, bu : Int, bo : Int) -> Sel {
+  {
+    anchor: Caret::{ unit: au, offset: ao },
+    focus: Caret::{ unit: bu, offset: bo },
+  }
+}

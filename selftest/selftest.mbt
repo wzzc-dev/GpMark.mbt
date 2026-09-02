@@ -353,7 +353,10 @@ fn main {
     println("BAD: undo did not restore bold state")
     failed.push(1)
   }
-  // --- Cmd+O 打开文件：真实事件弹路径栏 + 真文件读写回 -------------------
+  // --- 打开/保存文件：真文件读写回（open_path 与 Cmd+O 选中后的同一入口）---
+  // Cmd+O 本身不派发：它会弹出真实系统文件选择框并阻塞进程，无法无人值守
+  // 跑完；对话框桥（filedialog_stub.c）的正确性靠 GUI 手工验证 + wbtest 对
+  // 下游 open_path 的覆盖。
   {
     let tmp = "/tmp/mdmbt_selftest_open.md"
     let fixture = "# 自检外部文档\n\n来自打开功能的测试内容。\n"
@@ -363,22 +366,6 @@ fn main {
         failed.push(1)
       }
     }
-    let r_o = @mdmbt/adapter.dispatch(
-      @nakake/gpui-bindings.ABI_VERSION,
-      @nakake/gpui-bindings.EVENT_KEY,
-      0,
-      'o'.to_int(),
-      @nakake/gpui-bindings.MOD_PLATFORM,
-    )
-    if r_o != 1 || !@mdmbt/adapter.dialog_shown() {
-      println("BAD: Cmd+O did not open path bar (ret=\{r_o})")
-      failed.push(1)
-    } else {
-      println("  ok: Cmd+O opened path bar")
-      check("打开文件", dump0())
-    }
-    // EVENT_TEXT 需要 Rust 侧 payload 队列（外部注入不进来），打开动作
-    // 直接调 open_path——与路径栏按 Enter 的确认入口是同一函数。
     match @mdmbt/adapter.open_path(tmp) {
       Ok(_) => {
         @nakake/gpui-bindings.expect_ok(
@@ -392,10 +379,6 @@ fn main {
           println("  ok: opened file tracked as current")
         } else {
           println("BAD: current_path not tracked")
-          failed.push(1)
-        }
-        if @mdmbt/adapter.dialog_shown() {
-          println("BAD: dialog should close on successful open")
           failed.push(1)
         }
       }
@@ -424,10 +407,6 @@ fn main {
       println("  ok: Cmd+S persisted to disk")
     } else {
       println("BAD: Cmd+S did not persist")
-      failed.push(1)
-    }
-    if @mdmbt/adapter.dialog_shown() {
-      println("BAD: successful save should not open path bar")
       failed.push(1)
     }
     let _ = @fs.remove_file(tmp) catch { _ => () }

@@ -34,7 +34,8 @@ Enter/Backspace 自定义拦截（widget 会吞掉这些键，见 lib.rs
   token/子 token 的左缘，不占排版宽度、不推文字（代码块内仍是“▏”字符段，
   因为把行拆成两半会破坏长行软换行）；选区是背景色 run；所有键事件走 app 级
   `on_key/on_named_key/on_text` 由 core 的编辑内核处理。
-  代价：没有系统光标闪烁、没有 IME 内联候选窗（goal 明确不要求 IME）。
+  代价：没有系统光标闪烁；IME 组词文本浮动渲染在光标右侧（缺口 13 的
+  ImeBridge 推送 + render 的光标覆盖层），不走真实 inline marked-text 重排。
 
 ## 3. `typed_text` 不检查修饰键（键入与快捷键双投递）
 
@@ -106,16 +107,25 @@ build_tree → debug_dump_text 全链路（本项目 CI 手段）。
 
 框架没有 open-panel、没有文件拖放事件，`Cmd+V` 也不会作为 paste 内容送达
 （gpui-sys 仅在 focus 于 `OP_TEXT_INPUT` widget 时才代理剪贴板；我们不用
-widget，见缺口 2）。
+widget，见缺口 2）。库包又不能加 `cc-link-flags`（会令 moon 误把本包当可
+执行目标），因此**不能**直接在 adapter 里链 AppKit 调 `NSOpenPanel`。
 
 - **影响**：拿不到「浏览…」对话框选中的路径，也不能把文件拖进窗口。
-- **绕行**（`adapter/app.mbt` + `main/main.mbt`）：
-  1. `Cmd+O` 弹出窗口顶部**路径栏**：应用自管的单行输入（on_text/
-     Backspace/Enter/Esc 全走现有事件链），`~` 展开后用 `@fs` 读文件；
-     `Cmd+S` 规范导出回写关联文件（未关联时报错并弹栏提示）。
+- **绕行**（`adapter/filedialog_stub.c` + `adapter/app.mbt` + `main/main.mbt`）：
+  1. `Cmd+O`（顶栏 Open 按钮同款）经 `filedialog_stub.c`（native-stub）跑
+     `osascript -e 'choose file'` 弹出**真正的系统文件选择框**（即
+     NSOpenPanel，由独立 osascript 进程承载），选中后 `open_path` 读入并关联；
+     `Cmd+S`（顶栏 Save 按钮同款）规范导出回写关联文件，未关联文档弹
+     `choose file name` 系统保存框选定目的地。弹出期间本进程同步阻塞在
+     popen 上，等价模态；取消/出错返回空即无操作。
   2. `open dist/MdMbt.app --args <path>` 按文件启动（Finder「打开方式」
      的命令行形态），失败回退内置 demo。
-  限制：路径栏没有 IME 内联候选（同缺口 2）；不做自动补全。
+  3. 剪贴板已绕开本缺口：`adapter/clipboard_stub.c`（native-stub）经
+     `pbcopy`/`pbpaste` 同步读写系统剪贴板，`Cmd+C/X/V` 直接可用——见缺口 13。
+  形态说明：文件选择框与剪贴板同为「绕开框架、native-stub 子进程成桥」
+  （与 `moonbitlang/x/fs` 的 stub 一致），零框架链接依赖，测试可执行文件
+  同样能链接；选择框 FFI 不在 `moon test` 里触发（会弹真框阻塞），只测其
+  下游 `open_path`。限制：仍不支持把文件拖进窗口。
 
 ## 12. 无程序化滚动写入（虚拟窗口的遗留缺口）
 
@@ -126,3 +136,68 @@ widget，见缺口 2）。
   让视口自动跟随——只能靠用户滚动滚轮。spacer 保证滚动行程与全文等长，
   所以手动滚回去总能到。
 - **绕行**：无（正面解法是给 ABI 加 `OP_SET_SCROLL_OFFSET`，本期不改 ABI）。
+
+## 13. 自绘编辑器的 IME 与剪贴板（gpui-sys 附加面，本期已解）
+
+自绘编辑器（缺口 2）从不提交 `OP_TEXT_INPUT`，窗口没有 input handler，
+带来两个框架级缺口，本期在 vendored gpui-sys 内以**纯附加**方式补齐
+（不改 ABI 版本、不改既有 opcode/事件信封，旧消费者不受影响）：
+
+### 13a. IME 桥接（中文输入修复）
+
+- **根因**：mac 窗口把按键转交 `NSInputContext` 后，`NSTextInputClient`
+  查询全部落在 `window.input_handler`——为 None。组词无法登记 marked
+  text、提交文本被丢弃，而 raw 拼音字母已经作为 `EVENT_TEXT` 插入文档，
+  中文输入退化为插入拉丁字母。
+- **修复**（gpui-sys）：`ImeBridge`（实现 gpui `InputHandler`）由
+  `ImeBridgeProbe` 包装元素在**每次 paint** 时 `Window::handle_input`
+  注册（handle_input 只允许 paint 期调用；真实 text-input widget 随后
+  在自己的 paint 里覆盖注册，RFC 0003 行为不变）：
+  - marked range 存 `IME_MARKED` 静态表（重注册不丢组合状态），
+    mac 窗口的 `is_composing` 据此把组词期按键路由给输入法；
+  - 组词更新（`replace_and_mark_text_in_range`）/取消（`unmark_text`）经
+    `EVENT_ASYNC` 推 `0xEE` 标记 + UTF-8 组合文本，adapter 侧 `on_preedit`
+    记录、rebuild 时经 `render.set_preedit` 渲染为挂在光标位置的一行浮动
+    覆盖层 `[组词文本][光标条]`（组词文本蓝色下划线、光标条跟在其后，整行
+    绝对定位不推文字；取代旧顶栏「输入中」组合条）；
+  - 提交（`replace_text_in_range`）→ `EVENT_TEXT`（与普通键入同一载荷
+    路径，adapter `on_text` 无需特判）+ `window.refresh()`（重绘请求，
+    否则提交文本要等下一次无关帧才可见）。
+- **按键分流**（gpui-sys 根 on_key_down）：当前输入源是输入法——
+  `kTISPropertyInputSourceType` 为 `kTISTypeKeyboardInputMethodWithoutModes`
+  或 `kTISTypeKeyboardInputMode`（`CFEqual` 身份比较）——且为无
+  Ctrl/Cmd/Fn 修饰的可打印键时，不向 MoonBit 派发（不派发也不
+  stop-propagation，mac 窗口把原生事件转交输入法），并补发一条未知
+  named-key（id 0）维持 MoonBit 侧 swallow 代际（缺口 3），防快捷键的
+  杂散 `EVENT_TEXT` 吞掉后续 IME 提交。纯布局（ABC）行为完全不变。
+- **候选窗锚点**（已修复）：`InputHandler::bounds_for_range` 只能给几何，
+  桥层本无应用文本度量、旧实现固定返回视口左下锚点。现由应用声明几何：
+  渲染层把光标覆盖层 div `set_key("caret")`，gpui-sys 的 render_node 对带
+  该 key 的 div 包一层透明 `CaretBoundsProbe`（仿 `TextGlyphInset`：布局
+  全权委托子节点，仅 prepaint 时把窗口坐标矩形写入 `IME_CARET_BOUNDS`），
+  `bounds_for_range` 返回它——mac 窗口据此换算屏幕 firstRect，候选窗/组词
+  预览跟随光标。探针是纯附加 Rust 改动（不动 C ABI），key 契约由
+  render_wbtest 断言锁定。
+- **教训（已修复）**：输入源判定最早用 `kTISPropertyInputSourceID` 的
+  `com.apple.inputmethod.` 前缀，漏掉第三方输入法（搜狗 `com.sogou.*`、
+  微信 `com.tencent.inputmethod.wetype`）——可打印键被 raw `typed_text` 与
+  IME commit 各投递一次，字母/数字**双发**，WeType「中英混输」组词首字
+  重复（"nihao"→"n你好"）也源于此。改按输入源 TYPE 判定后一并修复。
+
+### 13b. 剪贴板（native-stub）
+
+`adapter/clipboard_stub.c`（moon.pkg `native-stub`）用
+`popen(pbcopy/pbpaste)` 同步读写纯文本剪贴板，导出
+`gpui_clipboard_write_text` / `gpui_clipboard_read_len` /
+`gpui_clipboard_read_copy` 三个 C 符号。选 gpui `App::read_from_clipboard`
+而非直接 NSPasteboard objc 调用的原因：C 导出拿不到 App 上下文（INPUT_MIRROR
+同一约束），而队列+下一帧排水是异步的；native-stub 与 `moonbitlang/x/fs`
+的形态一致，测试可执行文件同样能链接。`Cmd+C` 复制选区
+（`core::doc_selection_text`）、`Cmd+X` 剪切（复制+删选区）、`Cmd+V`
+粘贴（直接走 `doc_paste`，多行自动拆段）。
+
+### 13c. 顶栏
+
+窗口顶部常驻一排：左侧应用名 + 当前文件名（未关联显示 Untitled.md），
+右侧 New / Open / Save 按钮（New 清空为新文档，Open/Save 与 Cmd+O/Cmd+S
+同一路径；打开/保存走系统文件选择框，见缺口 11）。

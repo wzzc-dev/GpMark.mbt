@@ -310,17 +310,65 @@ fn token_segs(
   out
 }
 
+// --- IME 组词内联预览 -------------------------------------------------------
+// 组词文本由 app.rebuild 每次重建前推入（set_preedit）。渲染在挂 token
+// div 左缘的浮动行上（绝对定位，不占宽度、不推文字）：行内先是下划线组词
+// 文本、后是光标条——插入点在组词文本之后。取代旧的顶栏「输入中」组合条。
+// 浮动行 key="caret"，桥层（gpui-sys）据此捕获其窗口矩形做候选窗锚点。
+
+let preedit_text : Ref[String] = { val: "" }
+
+///|
+/// 推入当前组词文本（空串 = 无组词）。须在 render_doc_window 之前调用。
+pub fn set_preedit(text : String) -> Unit { preedit_text.val = text }
+
 /// 零宽光标：绝对定位的 2px 光标条，挂在 token div 内左缘——脱离排版
 /// 流，不占宽度、不推走后面的字；top/bottom=0 使高度自动等于行高。
 /// 它自己带同款点击 handler，2px 条带上的点击不会落空。
-fn caret_overlay(cb : @gpui.CommandBuffer, unit : Int, ti : Int, rtok : (Int, Int) -> Int) -> Unit {
-  cb.div()
-  cb.set_position(@gpui.POSITION_ABSOLUTE)
-  cb.set_inset(0, -1, 0, 0)
-  cb.set_min_size(2, -1)
-  cb.set_bg_color(rgb(col_caret))
-  cb.set_on_click(rtok(unit, ti))
-  cb.add_child()
+/// 组词中时整个覆盖层是一行 `[组词文本][光标条]`：光标条顺排在下划线
+/// 组词文本之后（输入法的插入点在组词文本末尾），行底用页面色垫住。
+/// 覆盖层 key="caret"：桥层据此捕获其窗口矩形，作为 IME 候选窗锚点。
+fn caret_overlay(
+  cb : @gpui.CommandBuffer,
+  unit : Int,
+  ti : Int,
+  rtok : (Int, Int) -> Int,
+  size : Float,
+) -> Unit {
+  if preedit_text.val == "" {
+    cb.div()
+    cb.set_position(@gpui.POSITION_ABSOLUTE)
+    cb.set_inset(0, -1, 0, 0)
+    cb.set_min_size(2, -1)
+    cb.set_bg_color(rgb(col_caret))
+    cb.set_on_click(rtok(unit, ti))
+    cb.set_key("caret")
+    cb.add_child()
+  } else {
+    cb.div()
+    cb.set_position(@gpui.POSITION_ABSOLUTE)
+    cb.set_inset(0, -1, 0, 0)
+    cb.set_flex_row()
+    cb.set_bg_color(@gpui.Color::rgb(28, 30, 38))
+    cb.set_on_click(rtok(unit, ti))
+    cb.set_key("caret")
+    cb.rich_text(
+      [(
+        preedit_text.val,
+        Some(@gpui.RunStyle::new(underline=true, color=rgb(col_caret))),
+      )],
+      col_text.0,
+      col_text.1,
+      col_text.2,
+      size,
+    )
+    cb.add_child()
+    cb.div()
+    cb.set_min_size(2, -1)
+    cb.set_bg_color(rgb(col_caret))
+    cb.add_child()
+    cb.add_child()
+  }
 }
 
 fn tail_zone(
@@ -329,13 +377,14 @@ fn tail_zone(
   ti : Int,
   rtok : (Int, Int) -> Int,
   show_caret : Bool,
+  size : Float,
 ) -> Unit {
   cb.div()
   cb.set_flex(1.0, 0.0, 0.0)
   cb.set_cursor(@gpui.CURSOR_TEXT)
   cb.set_on_click(rtok(unit, ti))
   if show_caret {
-    caret_overlay(cb, unit, ti, rtok)
+    caret_overlay(cb, unit, ti, rtok, size)
   }
   cb.add_child()
 }
@@ -370,10 +419,10 @@ fn push_text(
     cb.rich_text([(" ", None)], col_text.0, col_text.1, col_text.2, size)
     cb.add_child() // rich_text → token div
     if caret == 0 {
-      caret_overlay(cb, unit, 0, rtok)
+      caret_overlay(cb, unit, 0, rtok, size)
     }
     cb.add_child() // token div → row
-    tail_zone(cb, unit, 1, rtok, false)
+    tail_zone(cb, unit, 1, rtok, false, size)
     cb.add_child() // row → container
     cb.add_child() // container → slot
     return
@@ -425,12 +474,12 @@ fn push_text(
       )
       cb.add_child() // rich_text → token div
       if t.0 == caret {
-        caret_overlay(cb, unit, t.2, rtok)
+        caret_overlay(cb, unit, t.2, rtok, size)
       }
       cb.add_child() // token div → row
     }
     if ri == nrows - 1 {
-      tail_zone(cb, unit, si, rtok, caret == chars.length())
+      tail_zone(cb, unit, si, rtok, caret == chars.length(), size)
     }
     cb.add_child()
     ri = ri + 1
@@ -953,33 +1002,50 @@ fn sum_int(xs : Array[Int]) -> Int {
   s
 }
 
-// --- 打开文件路径栏 ---------------------------------------------------------
-// root 列顶部的输入条（app.mbt 的 Cmd+O 对话框）：提示 + 路径 + 行内光标
-// 字符 + 错误提示。这里是全应用唯一允许「▏」字符当光标的地方——它就是
-// 行的最后一个可见段，后面没有字可推。
-
-let col_err : (Int, Int, Int) = (255, 122, 122)
+// --- 顶栏 -------------------------------------------------------------------
+// 窗口最上面一排（用户指定的布局）：左侧应用名 + 文件名（未关联为
+// Untitled.md），右侧 New / Open / Save 按钮。按钮是带边框的小 div +
+// 文本，点击 id 由 app::reg_bar 发放。
 
 ///|
-/// 路径栏（调用方已 push root div）。
-pub fn render_path_bar(cb : @gpui.CommandBuffer, path : String, err : String) -> Unit {
+/// 顶栏（调用方已 push root div）。`rbar` 为按钮槽位（0=New 1=Open 2=Save）
+/// 取点击 handler id。
+pub fn render_top_bar(
+  cb : @gpui.CommandBuffer,
+  name : String,
+  rbar : (Int) -> Int,
+) -> Unit {
   cb.div()
   cb.set_flex_row()
   cb.set_gap(10.0)
-  cb.set_padding_sides(6, 14, 6, 14)
-  cb.set_bg_color(@gpui.Color::rgb(16, 18, 24))
-  cb.text("打开文件", col_muted.0, col_muted.1, col_muted.2, 13.0)
+  cb.set_padding_sides(10, 14, 10, 14)
+  cb.set_bg_color(@gpui.Color::rgb(24, 26, 33))
+  cb.text("md_mbt", col_muted.0, col_muted.1, col_muted.2, 13.0)
   cb.add_child()
-  let segs : Array[Seg] = [
-    (if path == "" { " " } else { path }, None),
-    ("▏", Some(@gpui.RunStyle::new(color=rgb(col_caret)))),
-  ]
-  if err != "" {
-    segs.push(("  " + err, Some(@gpui.RunStyle::new(color=rgb(col_err), italic=true))))
-  }
-  cb.rich_text(segs, col_text.0, col_text.1, col_text.2, 13.0)
+  cb.text(name, col_text.0, col_text.1, col_text.2, 13.0)
   cb.add_child()
-  cb.text("Enter 打开 · Esc 取消", col_muted.0, col_muted.1, col_muted.2, 13.0)
+  cb.div()
+  cb.set_flex(1.0, 0.0, 0.0)
   cb.add_child()
+  top_button(cb, 0, "New", rbar)
+  top_button(cb, 1, "Open", rbar)
+  top_button(cb, 2, "Save", rbar)
   cb.add_child() // bar → root
+}
+
+fn top_button(
+  cb : @gpui.CommandBuffer,
+  slot : Int,
+  label : String,
+  rbar : (Int) -> Int,
+) -> Unit {
+  cb.div()
+  cb.set_cursor(@gpui.CURSOR_POINTER)
+  cb.set_padding_sides(3, 12, 3, 12)
+  cb.set_border_color(1.0, @gpui.Color::rgb(70, 76, 92))
+  cb.set_rounded(6.0)
+  cb.set_on_click(rbar(slot))
+  cb.text(label, col_text.0, col_text.1, col_text.2, 13.0)
+  cb.add_child()
+  cb.add_child()
 }

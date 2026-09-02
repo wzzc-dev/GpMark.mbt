@@ -15,4 +15,4 @@ fi
 echo "[build] moon build (native)…"
 cd "$ROOT"
 moon build --target native
-echo "[build] OK: $ROOT/_build/native/debug/build/main/main.exe"
+echo "[build] OK: $ROOT/_build/native/debug/build/mdmbt/main/main.exe"

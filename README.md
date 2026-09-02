@@ -36,13 +36,22 @@ adapter/   独立模块 mdmbt/adapter：GPUI 适配层（import core + gpui-bind
            不 import link，故可 `moon test`）
   render.mbt   块树 → gpui 命令缓冲：文本单元按 token（CJK 逐字/拉丁逐词）拆成
                可点击 div、任务框独立点击区、rich_text 多 run 样式、光标段、
-               选区高亮、表头加粗、代码块 lang 标签、表格定宽列、Cmd+O 路径栏；
+               选区高亮、表头加粗、代码块 lang 标签、表格定宽列；
                虚拟窗口：估算高度前缀和只提交可视块 ±800px，窗口外 spacer 撑滚动行程；
                纯字节构造，无 FFI，可被 moon test 直接验证
   textlayout.mbt 点击定位布局器：token 分词 + 按字符类别的宽度估算 + 贪心折行
                （框架无坐标/度量，「点哪停哪」在 MoonBit 侧自算）
+  clipboard.mbt / clipboard_stub.c
+               系统剪贴板同步读写（native-stub 经 pbcopy/pbpaste，
+               Cmd+C/X/V；与 moonbitlang/x/fs 的 stub 同一形态）
+  filedialog.mbt / filedialog_stub.c
+               系统文件选择框（native-stub 经 osascript choose file /
+               choose file name，即 NSOpenPanel/NSSavePanel；Cmd+O 打开、
+               未关联文档 Cmd+S 弹保存框另存）
   app.mbt      编辑器状态、事件分发（键入+空格规则+活转换、Enter 规则链、快捷键、
-               逐单元点击/任务框点击、Cmd+O 路径栏 + 打开/保存文件）、
+               逐单元点击/任务框点击、顶栏按钮 + Cmd+O/Cmd+S 系统文件对话框 +
+               打开/保存文件、
+               IME 组词内联预览、剪贴板）、
                滚动事件拉取（scroll_state）驱动虚拟窗口滑动、
                动态增长的 handler id 池、
                可滚动容器（OVERFLOW_SCROLL + set_key 跨重建保位）、
@@ -63,7 +72,7 @@ gpui-moonbit 以 vendored 路径依赖引入（third_party/，git submodule）�
 Xcode CLT。gpui-moonbit 已 vendored 在 `third_party/`。
 
 ```sh
-moon test                     # core + adapter 单元测试（64 个，无 GUI）
+moon test                     # core + adapter 单元测试（62 个，无 GUI）
 moon build --target native    # 首次会由 link 包 prebuild 触发 cargo 构建 libgpui_sys.a
 
 ./build.sh                    # 确保 staticlib + 构建所有 native 目标
@@ -85,6 +94,21 @@ selftest 验证：解析 demo 文档 → 渲染全块词汇 → FFI 提交 → `
 「事件 → 规则 → 编辑内核 → 脏标记 → 重渲染 → 提交」闭环、勾选切换与 undo。
 
 ## 操作方式
+
+### 顶栏
+
+窗口最上面一排：左侧显示当前文件名（未关联文件时 `Untitled.md`），右侧为
+**New / Open / Save** 按钮——New 清空为新文档，Open 弹出系统文件选择框
+（同 Cmd+O），Save 规范回写关联文件（未关联时弹系统保存框另存，同 Cmd+S）。
+
+### 中文输入（IME）
+
+选择中文输入法直接打字即可：组词期按键自动让给输入法，组词文本以蓝色
+下划线浮动显示在光标处，光标条紧跟组词文本之后（整行不推文字、不占排版
+宽度），候选上屏后提交文本插入光标处；输入法候选窗锚定在组词文本下方，
+跟随光标移动。输入源按 TIS 类型（input method /
+input mode）判定，第三方输入法（搜狗、微信等）与系统拼音行为一致，不会
+出现字母/数字双发（见 docs/framework-gaps.md §13a）。
 
 ### 键入即转换（velotype 式输入规则）
 
@@ -118,8 +142,9 @@ selftest 验证：解析 demo 文档 → 渲染全块词汇 → FFI 提交 → `
 | Cmd+Shift+L | 代码块语言标签循环（moonbit/rust/python/…） |
 | Cmd+Z / Cmd+Shift+Z | 撤销 / 重做（快照式，含选区恢复） |
 | Cmd+A | 全文档选择 |
-| Cmd+O | 弹出路径栏：输入路径（`~` 可展开）打开 Markdown 文件；栏内 Enter 确认 / Esc 取消 |
-| Cmd+S | 规范导出回写（文档由文件打开后关联；未关联时弹路径栏提示） |
+| Cmd+C / Cmd+X / Cmd+V | 复制 / 剪切 / 粘贴（系统剪贴板；粘贴多行按行拆段） |
+| Cmd+O | 弹出**系统文件选择框**打开 Markdown 文件（NSOpenPanel；取消无操作） |
+| Cmd+S | 规范导出回写（文档由文件打开后关联）；未关联文档弹系统保存框选定目的地 |
 | 多行粘贴 | 按行拆分为多段，逐行跑空格规则 |
 | 鼠标滚轮 | 全文档滚动（滚动位置跨重渲染保持） |
 
@@ -134,10 +159,13 @@ selftest 验证：解析 demo 文档 → 渲染全块词汇 → FFI 提交 → `
 - 无文本度量接口 → ↑↓ 是"相邻编辑单元"近似，不跟视觉软换行走；折行宽度
   为字符类别估算值，与实际字体度量有 ±10% 级别的出入。
 - 文本区光标是绝对定位的 2px 光标条（零宽、不推文字），不闪烁；代码块内
-  光标仍是“▏”字符段（会占一格宽）；无 IME 内联候选窗。
+  光标仍是“▏”字符段（会占一格宽）；IME 组词文本浮动渲染在光标处而非
+  真实 inline 重排（候选窗经 key="caret" 几何回传已跟随光标，见
+  docs/framework-gaps.md §13）。
 - 鼠标拖拽选区、右键菜单：框架单事件入口无对应事件，未实现。
-- 无原生文件选择框/拖放/paste 代理 → 打开文件用 Cmd+O 路径栏或按文件启动
-  （framework-gaps §11）。
+- 文件拖拽进窗口不支持 → 打开/保存走系统文件选择框（native-stub 经
+  osascript choose file 弹出 NSOpenPanel/NSSavePanel，framework-gaps §11），
+  或按文件启动；剪贴板经 native-stub 直接读写系统剪贴板（framework-gaps §13b）。
 - 虚拟窗口下方向键把光标移出可视区时视口不自动跟随（无滚动写入 API，
   framework-gaps §12）；滚轮可达任意位置。
 - 导出时行内特殊字符（如 `*`）不做反斜杠转义，含字面样式符号的文本

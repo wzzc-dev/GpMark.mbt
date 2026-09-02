@@ -154,3 +154,55 @@ test "token 布局表：空单元也有点击区" {
   )
   assert_eq(tok_starts_of(empty_u), [0, 0])
 }
+
+///|
+fn cb_contains(hay : Bytes, needle : String) -> Bool {
+  let n = @utf8.encode(needle)
+  let hl = hay.length() - n.length()
+  let mut i = 0
+  while i <= hl {
+    let mut j = 0
+    while j < n.length() && hay[i + j] == n[j] {
+      j = j + 1
+    }
+    if j == n.length() {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+test "组词预览：set_preedit 后光标处命令缓冲浮动渲染组词文本" {
+  let bs = @core.parse_doc("正文\n")
+  let sel = @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 })
+  set_preedit("nihao")
+  let cb = @gpui.CommandBuffer::new()
+  cb.div()
+  render_doc(
+    cb,
+    bs,
+    sel,
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  assert_true(cb_contains(cb.to_bytes(), "nihao"))
+  // 覆盖层必须带 caret key：桥层 CaretBoundsProbe 据此捕获候选窗锚点矩形
+  assert_true(cb_contains(cb.to_bytes(), "caret"))
+  // 清空组词后光标处恢复干净（提交/取消路径）
+  set_preedit("")
+  let cb2 = @gpui.CommandBuffer::new()
+  cb2.div()
+  render_doc(
+    cb2,
+    bs,
+    sel,
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  assert_true(!cb_contains(cb2.to_bytes(), "nihao"))
+  assert_true(cb_contains(cb2.to_bytes(), "caret"))
+}

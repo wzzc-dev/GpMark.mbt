@@ -471,3 +471,53 @@ fn retag(items : Array[Item], kind : ListKind) -> Array[Item] {
     }
   })
 }
+
+///|
+/// 选区覆盖的纯文本；空选区返回 ""。复制/剪切用：跨单元按 collect_units
+/// 顺序截取各单元 plain（单元内不含换行，单元间补 '\n'，代码块内部的
+/// 换行已在 plain 里），端点偏移越界时钳到单元边界。
+pub fn doc_selection_text(blocks : Array[Block], sel : Sel) -> String {
+  let a0 = sel_start(sel)
+  let b0 = sel_end(sel)
+  if a0 == b0 {
+    return ""
+  }
+  let us = collect_units(blocks)
+  let n = us.length()
+  if n == 0 {
+    return ""
+  }
+  let lens : Array[Int] = []
+  for i = 0; i < n; i = i + 1 {
+    lens.push(char_len(us[i].plain))
+  }
+  // 端点越界钳到文档边界（unit 超出时 offset 一并取该单元尾/首）
+  let clamp = fn(c : Caret) -> Caret {
+    let u = if c.unit < 0 { 0 } else if c.unit >= n { n - 1 } else { c.unit }
+    let o = if c.unit < 0 {
+      0
+    } else if c.unit >= n {
+      lens[u]
+    } else {
+      c.offset
+    }
+    Caret::{ unit: u, offset: o }
+  }
+  let a = clamp(a0)
+  let b = clamp(b0)
+  let out : Array[Char] = []
+  for u = a.unit; u <= b.unit; u = u + 1 {
+    let len = lens[u]
+    let s = if u == a.unit { a.offset } else { 0 }
+    let e = if u == b.unit { b.offset } else { len }
+    let s2 = if s < 0 { 0 } else if s > len { len } else { s }
+    let e2 = if e < s2 { s2 } else if e > len { len } else { e }
+    for i = s2; i < e2; i = i + 1 {
+      out.push(us[u].plain.to_array()[i])
+    }
+    if u < b.unit {
+      out.push('\n')
+    }
+  }
+  String::from_array(out)
+}

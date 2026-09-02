@@ -92,7 +92,7 @@ fn compute_window(y : Float) -> (Int, Int) {
 
 ///|
 /// 载入文档（demo 启动 / 打开文件）。切换文档即新会话：undo 历史、
-/// 关联文件、路径栏一并复位。
+/// 关联文件一并复位。
 pub fn load(src : String) -> Unit {
   ed.blocks = @core.doc_ensure(@core.parse_doc(src))
   ed.sel = @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 })
@@ -104,9 +104,6 @@ pub fn load(src : String) -> Unit {
   win_hi.val = 0
   cache_valid.val = false
   current_file.val = ""
-  dialog_open.val = false
-  path_buf.val = ""
-  path_err.val = ""
 }
 
 ///|
@@ -116,19 +113,31 @@ pub fn dump() -> String {
 }
 
 // --- 打开 / 保存文件（Cmd+O / Cmd+S）----------------------------------------
-// 框架无原生文件选择框、也无拖放事件（framework-gaps §6）：Cmd+O 在窗口
-// 顶部弹一条路径栏，键事件由对话框状态机接管（键入/退格/Enter/Esc），
-// Enter 用 @fs 读文件替换文档并记住路径；已关联文件的文档 Cmd+S 将规范
-// 导出回写同一路径。路径支持 `~` 展开；读入统一 CRLF→LF。
+// Cmd+O（顶栏 Open 按钮同款）经 filedialog_stub.c 弹出系统文件选择框
+// （NSOpenPanel，子进程 osascript choose file 承载，弹出期间本进程阻塞
+// 等价模态），选中即 open_path 读文件替换文档并记住路径；取消无操作。
+// 已关联文件的文档 Cmd+S 规范导出回写同一路径；未关联文档（新建/demo）
+// 弹出系统保存框选定目的地，写入成功才建立关联。路径支持 `~` 展开；
+// 读入统一 CRLF→LF。
 
-let dialog_open : Ref[Bool] = { val: false }
-let path_buf : Ref[String] = { val: "" }
-let path_err : Ref[String] = { val: "" }
 let current_file : Ref[String] = { val: "" }
 
-///|
-/// 路径栏是否显示中。
-pub fn dialog_shown() -> Bool { dialog_open.val }
+// --- IME 组合中文字（preedit）-----------------------------------------------
+// gpui-sys 的 ImeBridge 在组词更新时经 EVENT_ASYNC 推 0xEE 标记 + UTF-8 组合
+// 文本；提交文本走 EVENT_TEXT 并在 on_text 顶部先清空本状态（提交替代组合）。
+
+let preedit : Ref[String] = { val: "" }
+
+fn on_preedit(payload : Bytes) -> Unit {
+  if payload.length() > 0 && payload[0] == 0xEE {
+    preedit.val = if payload.length() > 1 {
+      @utf8.decode(payload[1:payload.length()]) catch { _ => "" }
+    } else {
+      ""
+    }
+    bump()
+  }
+}
 
 ///|
 /// 当前文档关联的文件路径（空串 = 未关联，如 demo 文档）。
@@ -194,9 +203,6 @@ pub fn open_path(p : String) -> Result[Unit, String] {
       Some(text) => {
         load(normalize_eol(text))
         current_file.val = full
-        dialog_open.val = false
-        path_buf.val = full
-        path_err.val = ""
         Ok(())
       }
     }
@@ -217,16 +223,93 @@ pub fn save_current_file() -> Result[Unit, String] {
 }
 
 ///|
-/// 直接展开路径栏（供 main 启动时默认弹出；等价于按了一次 Cmd+O）。
-pub fn show_open_dialog() -> Unit {
-  open_dialog()
-  bump()
+/// 弹出系统文件选择框选择并打开文件（Cmd+O / 顶栏 Open）。取消无操作；
+/// 选中后读入失败（极少见）打日志并保留当前文档。
+fn open_via_dialog() -> Unit {
+  match pick_file() {
+    Some(p) =>
+      match open_path(p) {
+        Ok(_) => ()
+        Err(e) => println("open failed: " + e)
+      }
+    None => ()
+  }
 }
 
-fn open_dialog() -> Unit {
-  path_buf.val = if current_file.val == "" { "~/" } else { current_file.val }
-  path_err.val = ""
-  dialog_open.val = true
+///|
+/// 保存入口（Cmd+S / 顶栏 Save）：已关联文件直接回写；未关联文档弹系统
+/// 保存框选定目的地，写入成功才建立关联（取消无操作）。
+fn save_via_dialog() -> Unit {
+  if current_file.val == "" {
+    match pick_save_file() {
+      Some(p) =>
+        if write_text(p, dump()) {
+          current_file.val = p
+        } else {
+          println("写入失败：" + p)
+        }
+      None => ()
+    }
+  } else {
+    match save_current_file() {
+      Ok(_) => ()
+      Err(e) => println(e)
+    }
+  }
+}
+
+// --- 顶栏（文件名 + New / Open / Save 按钮）----------------------------------
+// 用户指定的布局：最上面一排左侧显示文件名，右侧打开文件按钮（外加 New/Save，
+// 对齐 mockup）。按钮沿用 handler id 机制：id 一次注册永久复用，重建只重写。
+
+///|
+/// 顶栏左侧显示的文件名；未关联文件（demo/新建）时 Untitled.md。
+pub fn display_name() -> String {
+  let p = current_file.val
+  if p == "" {
+    "Untitled.md"
+  } else {
+    let cs = p.to_array()
+    let mut i = cs.length() - 1
+    while i > 0 && cs[i - 1] != '/' {
+      i = i - 1
+    }
+    String::from_array(cs[i:cs.length()])
+  }
+}
+
+fn on_btn_new() -> Unit {
+  // 新建：清空为单空段落（load 复位 undo/关联文件）。
+  load("")
+}
+
+fn on_btn_open() -> Unit {
+  open_via_dialog()
+}
+
+fn on_btn_save() -> Unit {
+  save_via_dialog()
+}
+
+let bar_ids : Array[@gpui.HandlerId] = []
+
+fn reg_bar(slot : Int) -> Int {
+  while bar_ids.length() <= slot {
+    let k = bar_ids.length()
+    bar_ids.push(
+      handlers.on_click(fn(_view) {
+        if k == 0 {
+          on_btn_new()
+        } else if k == 1 {
+          on_btn_open()
+        } else {
+          on_btn_save()
+        }
+        bump()
+      }),
+    )
+  }
+  bar_ids[slot].to_int()
 }
 
 ///|
@@ -252,6 +335,7 @@ let handlers : @gpui.HandlerRegistry = {
   let _ = r.on_key(fn(code, mods) { on_key(code, mods) })
   let _ = r.on_named_key(fn(id, mods) { on_named_key(id, mods) })
   let _ = r.on_text(fn(t) { on_text(t) })
+  let _ = r.on_async(fn(payload) { on_preedit(payload) })
   r
 }
 
@@ -368,14 +452,10 @@ fn bump_key_gen(mods : Int) -> Unit {
 }
 
 fn on_text(t : String) -> Unit {
+  // 提交文本替代组合中的 preedit（IME commit 先于本处理清空组词预览）
+  preedit.val = ""
   if swallow_gen[0] == key_gen[0] {
     swallow_gen[0] = -1
-    return
-  }
-  if dialog_open.val {
-    path_buf.val = path_buf.val + t
-    path_err.val = ""
-    bump()
     return
   }
   // 多行粘贴拆段 + 「标记+空格」规则 + 活行内转换
@@ -443,23 +523,37 @@ fn on_key(code : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
   if (mods & @gpui.MOD_PLATFORM) != 0 {
     if code_hit(code, 'o') || code_hit(code, 'O') {
-      if dialog_open.val {
-        dialog_open.val = false
-      } else {
-        open_dialog()
-      }
+      // 弹系统文件选择框（osascript NSOpenPanel），弹出期间本进程阻塞
+      open_via_dialog()
       bump()
     } else if code_hit(code, 's') || code_hit(code, 'S') {
-      match save_current_file() {
-        Ok(_) => ()
-        Err(e) => {
-          open_dialog()
-          path_err.val = e
-        }
+      save_via_dialog()
+      bump()
+    } else if code_hit(code, 'c') || code_hit(code, 'C') {
+      // 复制选区（空选区无操作）
+      let text = @core.doc_selection_text(ed.blocks, ed.sel)
+      if text != "" {
+        clipboard_write(text)
       }
       bump()
-    } else if dialog_open.val {
-      bump() // 路径栏打开时吞掉其余组合键
+    } else if code_hit(code, 'x') || code_hit(code, 'X') {
+      // 剪切：复制 + 删除选区（空选区无操作）
+      let text = @core.doc_selection_text(ed.blocks, ed.sel)
+      if text != "" {
+        clipboard_write(text)
+        let unit = ed.sel.focus.unit.to_string()
+        ed.apply_text("x" + unit, fn(b, s) { @core.doc_backspace(b, s) })
+      }
+      bump()
+    } else if code_hit(code, 'v') || code_hit(code, 'V') {
+      // 粘贴：同步读系统剪贴板（NSPasteboard 桩），直接走 doc_paste
+      // （多行自动拆段），不经过 on_text 的键入路径。
+      let text = clipboard_read()
+      if text != "" {
+        let unit = ed.sel.focus.unit.to_string()
+        ed.apply_text("v" + unit, fn(b, s) { @core.doc_paste(b, s, text) })
+      }
+      bump()
     } else if code_hit(code, 'z') || code_hit(code, 'Z') {
       if (mods & @gpui.MOD_SHIFT) != 0 {
         ed.redo()
@@ -493,24 +587,6 @@ fn on_key(code : Int, mods : Int) -> Unit {
 
 fn on_named_key(id : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
-  if dialog_open.val {
-    // 路径栏按键接管：Esc 取消 / Enter 打开 / Backspace 删字符，其余吞掉
-    if id == @gpui.KEY_ESCAPE {
-      dialog_open.val = false
-    } else if id == @gpui.KEY_ENTER {
-      match open_path(path_buf.val) {
-        Ok(_) => ()
-        Err(e) => path_err.val = e
-      }
-    } else if id == @gpui.KEY_BACKSPACE {
-      let cs = path_buf.val.to_array()
-      if cs.length() > 0 {
-        path_buf.val = String::from_array(cs[0:cs.length() - 1])
-      }
-    }
-    bump()
-    return
-  }
   let ext = (mods & @gpui.MOD_SHIFT) != 0
   let cmd = (mods & @gpui.MOD_PLATFORM) != 0
   let alt = (mods & @gpui.MOD_ALT) != 0
@@ -610,13 +686,11 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
   win_hi.val = hi
   let cum = cache_cum.val
   let cb = @gpui.CommandBuffer::new()
-  cb.div() // root：仅承载底色、路径栏与滚动容器
+  cb.div() // root：承载顶栏与滚动容器
   cb.set_key("root")
   cb.set_bg(28, 30, 38)
   cb.set_flex_col()
-  if dialog_open.val {
-    render_path_bar(cb, path_buf.val, path_err.val)
-  }
+  render_top_bar(cb, display_name(), reg_bar)
   cb.div() // 滚动容器：内容超高时鼠标滚轮可滚（框架提供原生滚动）
   cb.set_key("scroll")
   cb.set_flex_col()
@@ -631,6 +705,7 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
     cb.set_flex(0.0, 0.0, cum[lo])
     cb.add_child()
   }
+  set_preedit(preedit.val) // 组词文本随光标内联渲染（render 的光标覆盖层）
   render_doc_window(
     cb,
     ed.blocks,

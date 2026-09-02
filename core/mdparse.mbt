@@ -88,7 +88,7 @@ fn is_hr(line : String) -> Bool {
 fn fence_lang(line : String) -> String? {
   let t = trim_str(line)
   if starts_with_str(t, "```") {
-    Some(trim_str(t.substring(start=3)))
+    Some(trim_str(t[3:].to_owned()))
   } else {
     None
   }
@@ -107,16 +107,16 @@ fn is_quote(line : String) -> Bool {
 ///|
 fn strip_quote(line : String) -> String {
   let t = trim_str(line)
-  let rest = t.substring(start=1)
+  let rest = t[1:].to_owned()
   if starts_with_str(rest, " ") {
-    rest.substring(start=1)
+    rest[1:].to_owned()
   } else {
     rest
   }
 }
 
 ///|
-struct Marker {
+priv struct Marker {
   ordered_start : Int? // None = bullet
   checked : Bool?
   rest : String
@@ -148,12 +148,12 @@ fn parse_marker(line : String) -> Marker? {
     return Some(Marker::{
       ordered_start: None,
       checked: Some(cs[3] != ' '),
-      rest: trim_str(t.substring(start=6)),
+      rest: trim_str(t[6:].to_owned()),
     })
   }
   // 无序 -
   if n >= 1 && cs[0] == '-' && !is_hr(line) && (n == 1 || cs[1] == ' ') {
-    let rest = if n >= 2 { trim_str(t.substring(start=2)) } else { "" }
+    let rest = if n >= 2 { trim_str(t[2:].to_owned()) } else { "" }
     return Some(Marker::{ ordered_start: None, checked: None, rest })
   }
   // 无序 * / +（* 需排除 hr）
@@ -164,7 +164,7 @@ fn parse_marker(line : String) -> Marker? {
     return Some(Marker::{
       ordered_start: None,
       checked: None,
-      rest: trim_str(t.substring(start=2)),
+      rest: trim_str(t[2:].to_owned()),
     })
   }
   // 有序 N. / N)
@@ -177,7 +177,7 @@ fn parse_marker(line : String) -> Marker? {
     return Some(Marker::{
       ordered_start: Some(if p == 0 { 1 } else { p }),
       checked: None,
-      rest: trim_str(t.substring(start=d + 2)),
+      rest: trim_str(t[d + 2:].to_owned()),
     })
   }
   None
@@ -224,10 +224,10 @@ fn is_table_row(line : String) -> Bool {
 fn split_cells(line : String) -> Array[String] {
   let mut t = trim_str(line)
   if starts_with_str(t, "|") {
-    t = t.substring(start=1)
+    t = t[1:].to_owned()
   }
   if ends_with_str(t, "|") {
-    t = t.substring(end=t.length() - 1)
+    t = t[:t.length() - 1].to_owned()
   }
   let out : Array[String] = []
   for sv in t.split("|") {
@@ -238,11 +238,11 @@ fn split_cells(line : String) -> Array[String] {
 
 ///|
 fn is_block_start(line : String) -> Bool {
-  is_heading(line).is_some() ||
-  fence_lang(line).is_some() ||
+  is_heading(line) is Some(_) ||
+  fence_lang(line) is Some(_) ||
   is_hr(line) ||
   is_quote(line) ||
-  parse_marker(line).is_some()
+  parse_marker(line) is Some(_)
 }
 
 ///|
@@ -257,7 +257,7 @@ fn dedent(lines : Array[String], n : Int) -> Array[String] {
 ///|
 fn dedent_line(line : String, n : Int) -> String {
   if indent_of(line) >= n {
-    line.substring(start=n)
+    line[n:].to_owned()
   } else {
     trim_str(line)
   }
@@ -274,7 +274,7 @@ fn first_trim_char(line : String) -> Char? {
 }
 
 ///|
-fn cells_inline(cells : Array[String]) -> Array[Inline] {
+fn _cells_inline(cells : Array[String]) -> Array[Inline] {
   let out : Array[Inline] = []
   for c in cells {
     for i in parse_inline(c) {
@@ -378,7 +378,7 @@ pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
       continue
     }
     // 列表
-    if parse_marker(line).is_some() {
+    if parse_marker(line) is Some(_) {
       let (list, next) = parse_list(lines, i)
       out.push(list)
       i = next
@@ -468,13 +468,13 @@ fn parse_image_target(s : String) -> (String, String) {
 
 ///|
 fn marker_same_list(a : Marker, b : Marker) -> Bool {
-  if a.ordered_start.is_some() != b.ordered_start.is_some() {
+  if (a.ordered_start is Some(_)) != (b.ordered_start is Some(_)) {
     return false
   }
-  if a.ordered_start.is_some() {
+  if a.ordered_start is Some(_) {
     true
   } else {
-    a.checked.is_some() == b.checked.is_some()
+    (a.checked is Some(_)) == (b.checked is Some(_))
   }
 }
 
@@ -488,7 +488,7 @@ fn parse_list(lines : Array[String], start : Int) -> (Block, Int) {
   let base = indent_of(lines[start])
   let ordered_start = first_m.ordered_start
   let items : Array[Item] = []
-  let mut any_task = first_m.checked.is_some()
+  let mut any_task = first_m.checked is Some(_)
   let mut i = start
   while i < n {
     let line = lines[i]
@@ -499,7 +499,7 @@ fn parse_list(lines : Array[String], start : Int) -> (Block, Int) {
       }
       if j < n &&
         indent_of(lines[j]) >= base + 2 &&
-        parse_marker(lines[j]).is_none() {
+        parse_marker(lines[j]) is None {
         i = j
         continue
       } else {
@@ -511,7 +511,7 @@ fn parse_list(lines : Array[String], start : Int) -> (Block, Int) {
         if indent_of(line) > base || !marker_same_list(first_m, m) {
           break
         }
-        if m.checked.is_some() {
+        if m.checked is Some(_) {
           any_task = true
         }
         let content_text : Array[String] = [m.rest]
@@ -543,7 +543,7 @@ fn parse_list(lines : Array[String], start : Int) -> (Block, Int) {
         let cn = cont_or_child.length()
         while ci < cn {
           let d = dedent_line(cont_or_child[ci], base + 2)
-          if parse_marker(d).is_some() || is_block_start(d) {
+          if parse_marker(d) is Some(_) || is_block_start(d) {
             while ci < cn {
               tail.push(cont_or_child[ci])
               ci = ci + 1
@@ -708,7 +708,7 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
         }
         push_all(
           out,
-          map_marks(parse_inline_gen(cs[i + 2:close].to_array(), allow_link), fn(
+          map_marks(parse_inline_gen(cs[i + 2:close].to_owned(), allow_link), fn(
             m,
           ) {
             Marks::{ ..m, strike: true }
@@ -741,7 +741,7 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
         let m = mark_of(kk)
         push_all(
           out,
-          map_marks(parse_inline_gen(cs[i + kk:close].to_array(), allow_link), fn(
+          map_marks(parse_inline_gen(cs[i + kk:close].to_owned(), allow_link), fn(
             mm,
           ) {
             mm.union(m)
@@ -804,7 +804,7 @@ fn parse_inline_gen(cs : Array[Char], allow_link : Bool) -> Array[Inline] {
             out.push(Run(String::from_array(buf), Marks::default()))
             buf = []
           }
-          let inner = parse_inline_gen(cs[i + 1:rb].to_array(), false)
+          let inner = parse_inline_gen(cs[i + 1:rb].to_owned(), false)
           out.push(Link(String::from_array(cs[rb + 2:rp]), inner))
           i = rp + 1
           continue

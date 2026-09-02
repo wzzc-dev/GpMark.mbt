@@ -85,7 +85,7 @@ pub fn serialize_block(b : Block) -> String {
 ///|
 fn trim_trailing_newline(s : String) -> String {
   if ends_with_str(s, "\n") {
-    s.substring(end=s.length() - 1)
+    s[:s.length() - 1].to_owned()
   } else {
     s
   }

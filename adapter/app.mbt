@@ -334,7 +334,7 @@ fn on_box_click(unit : Int) -> Unit {
   if unit < 0 || unit >= us.length() {
     return
   }
-  ed.apply(fn(b, s) {
+  ed.apply(fn(b, _s) {
     @core.doc_toggle_task(b, @core.collapsed_sel(@core.Caret::{ unit, offset: 0 }))
   })
   bump()

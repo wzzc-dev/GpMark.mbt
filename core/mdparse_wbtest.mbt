@@ -10,7 +10,7 @@ fn w(bs : Array[Block]) -> String {
 }
 
 ///|
-fn plain(b : Block) -> String {
+fn _plain(b : Block) -> String {
   block_plain(b)
 }
 

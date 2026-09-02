@@ -1,6 +1,6 @@
 ///|
 /// undo 合并（apply_text）测试。
-fn csel2(unit : Int, offset : Int) -> Sel {
+fn _csel2(unit : Int, offset : Int) -> Sel {
   collapsed_sel(Caret::{ unit, offset })
 }
 

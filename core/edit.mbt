@@ -265,10 +265,10 @@ pub fn doc_move(
   blocks : Array[Block],
   sel : Sel,
   dir : Dir,
-  extend : Bool,
+  doc_move_extend : Bool,
 ) -> Sel {
   let us = collect_units(blocks)
-  let base = if extend { sel.focus } else { sel_start(sel) }
+  let base = if doc_move_extend { sel.focus } else { sel_start(sel) }
   let n = us.length()
   if n == 0 {
     return sel
@@ -308,7 +308,7 @@ pub fn doc_move(
     Home => Caret::{ unit: cu, offset: 0 }
     End => Caret::{ unit: cu, offset: len }
   }
-  if extend {
+  if doc_move_extend {
     { anchor: sel.anchor, focus: np }
   } else {
     collapsed_sel(np)

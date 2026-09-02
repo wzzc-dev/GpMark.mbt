@@ -216,6 +216,13 @@ pub fn save_current_file() -> Result[Unit, String] {
   }
 }
 
+///|
+/// 直接展开路径栏（供 main 启动时默认弹出；等价于按了一次 Cmd+O）。
+pub fn show_open_dialog() -> Unit {
+  open_dialog()
+  bump()
+}
+
 fn open_dialog() -> Unit {
   path_buf.val = if current_file.val == "" { "~/" } else { current_file.val }
   path_err.val = ""

@@ -116,6 +116,16 @@ test "open_path 读取替换文档；save_current_file 回写；tilde 展开" {
 }
 
 ///|
+test "show_open_dialog：main 启动默认展开，Esc 可关" {
+  load(demo_sample())
+  assert_false(dialog_open.val)
+  show_open_dialog()
+  assert_true(dialog_open.val)
+  assert_true(path_buf.val == "~/")
+  on_named_key(@gpui.KEY_ESCAPE, 0)
+  assert_false(dialog_open.val)
+}
+
 test "CRLF 归一化" {
   assert_true(normalize_eol("a\r\nb\rc\nd") == "a\nb\nc\nd")
   assert_true(normalize_eol("plain") == "plain")

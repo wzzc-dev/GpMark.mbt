@@ -1,0 +1,11 @@
+{
+  "name": "mdmbt/adapter",
+  "version": "0.1.0",
+  "description": "GPUI 适配层：块树 → 命令缓冲 + 事件回灌；不 import link，可 moon test",
+  "preferred-target": "native",
+  "deps": {
+    "mdmbt/core": "0.1.0",
+    "nakake/gpui-bindings": { "path": "../third_party/gpui-moonbit/moonbit-bindings" },
+    "moonbitlang/x": "0.5.1"
+  }
+}

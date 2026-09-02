@@ -1,0 +1,11 @@
+{
+  "name": "mdmbt/main",
+  "version": "0.1.0",
+  "description": "demo 装配：register_dispatch → build_tree → run_window（唯一链接 Rust staticlib 的入口之一）",
+  "preferred-target": "native",
+  "deps": {
+    "mdmbt/adapter": "0.1.0",
+    "nakake/gpui-bindings": { "path": "../third_party/gpui-moonbit/moonbit-bindings" },
+    "moonbitlang/x": "0.5.1"
+  }
+}

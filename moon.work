@@ -1,0 +1,10 @@
+// 多模块工作区：core（纯逻辑，零依赖）→ adapter（GPUI 适配，不 import link）
+// → main / selftest（两个可执行入口，import link 链接 Rust staticlib）。
+// 三方 gpui-moonbit 保持 vendored 路径依赖，不入成员列表（避免其示例/测试
+// 被根目录 moon test 扫到）。
+members = [
+  "./core",
+  "./adapter",
+  "./main",
+  "./selftest",
+]

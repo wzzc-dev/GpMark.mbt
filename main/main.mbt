@@ -14,7 +14,7 @@ fn main {
   // md_editor gpui2 适配器协议：--benchmark 为 headless-render 诊断行，
   // --ui-benchmark 为真实窗口 ui-frame 帧循环（Rust 侧打印 JSON 后退出）。
   if args.length() >= 4 && args[1] == "--benchmark" {
-    @mdmbt/editor/adapter.run_headless_benchmark(args[2], args[3])
+    @mdmbt/adapter.run_headless_benchmark(args[2], args[3])
     return
   }
   if args.length() >= 4 && args[1] == "--ui-benchmark" {
@@ -22,20 +22,20 @@ fn main {
     let source = @fs.read_file_to_string(args[2]) catch {
       _ => abort("gpui2 benchmark fixture is unreadable")
     }
-    @nakake/gpui-bindings.register_dispatch(@mdmbt/editor/adapter.dispatch)
-    @mdmbt/editor/adapter.run_ui_benchmark(
+    @nakake/gpui-bindings.register_dispatch(@mdmbt/adapter.dispatch)
+    @mdmbt/adapter.run_ui_benchmark(
       source,
       args[3],
       (now_ms() - load_started).max(0.0),
     )
     return
   }
-  @nakake/gpui-bindings.register_dispatch(@mdmbt/editor/adapter.dispatch)
-  @mdmbt/editor/adapter.set_viewport_height(720.0)
+  @nakake/gpui-bindings.register_dispatch(@mdmbt/adapter.dispatch)
+  @mdmbt/adapter.set_viewport_height(720.0)
   // 按文件启动：`open dist/MdMbt.app --args <path>`（Finder「打开方式」的
   // 命令行形态）。读取/解析失败则回退内置 demo 文档。
   let opened = if args.length() >= 2 {
-    match @mdmbt/editor/adapter.open_path(args[1]) {
+    match @mdmbt/adapter.open_path(args[1]) {
       Ok(_) => {
         println("opened: " + args[1])
         true
@@ -49,10 +49,10 @@ fn main {
     false
   }
   if !opened {
-    @mdmbt/editor/adapter.load(@mdmbt/editor/adapter.demo_sample())
+    @mdmbt/adapter.load(@mdmbt/adapter.demo_sample())
   }
   @nakake/gpui-bindings.expect_ok(
-    @mdmbt/editor/adapter.build_tree(0),
+    @mdmbt/adapter.build_tree(0),
     "initial build_tree",
   )
   @nakake/gpui-bindings.expect_ok(

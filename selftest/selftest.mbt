@@ -36,10 +36,10 @@ fn check(needle : String, hay : String) -> Unit {
 
 ///|
 fn main {
-  @nakake/gpui-bindings.register_dispatch(@mdmbt/editor/adapter.dispatch)
-  @mdmbt/editor/adapter.load(@mdmbt/editor/adapter.demo_sample())
+  @nakake/gpui-bindings.register_dispatch(@mdmbt/adapter.dispatch)
+  @mdmbt/adapter.load(@mdmbt/adapter.demo_sample())
   @nakake/gpui-bindings.expect_ok(
-    @mdmbt/editor/adapter.build_tree(0),
+    @mdmbt/adapter.build_tree(0),
     "initial build_tree",
   )
   let dump = dump0()
@@ -66,10 +66,10 @@ fn main {
     failed.push(1)
   }
   // 模拟编辑：插入字符 → 重建 → dump 应包含新内容
-  let ed = @mdmbt/editor/adapter.ed
+  let ed = @mdmbt/adapter.ed
   ed.apply(fn(b, s) { @core.doc_insert(b, s, "Zq") })
   @nakake/gpui-bindings.expect_ok(
-    @mdmbt/editor/adapter.build_tree(0),
+    @mdmbt/adapter.build_tree(0),
     "rebuild after insert",
   )
   let dump2 = dump0()
@@ -77,7 +77,7 @@ fn main {
   // 模拟 undo：撤销插入 → 重建 → 新内容消失
   ed.undo()
   @nakake/gpui-bindings.expect_ok(
-    @mdmbt/editor/adapter.build_tree(0),
+    @mdmbt/adapter.build_tree(0),
     "rebuild after undo",
   )
   {
@@ -92,18 +92,18 @@ fn main {
   // --- 事件注入：用 Rust 回调同款信封直接打 dispatch 入口，验证
   // dispatch → decode_event → handler → core 编辑 → dirty → rebuild → FFI 提交 ---
   let base_blocks = ed.blocks.length()
-  let r_click = @mdmbt/editor/adapter.dispatch(
+  let r_click = @mdmbt/adapter.dispatch(
     @nakake/gpui-bindings.ABI_VERSION,
     @nakake/gpui-bindings.EVENT_CLICK,
     0,
-    @mdmbt/editor/adapter.click_id_of(2),
+    @mdmbt/adapter.click_id_of(2),
     0,
   )
   if r_click == 1 {
     println("  ok: click dispatch → dirty rebuild")
   } else {
     println(
-      "BAD: click dispatch returned \{r_click}, id=\{@mdmbt/editor/adapter.click_id_of(2)}",
+      "BAD: click dispatch returned \{r_click}, id=\{@mdmbt/adapter.click_id_of(2)}",
     )
     failed.push(1)
   }
@@ -117,7 +117,7 @@ fn main {
       failed.push(1)
     }
   }
-  let r_enter = @mdmbt/editor/adapter.dispatch(
+  let r_enter = @mdmbt/adapter.dispatch(
     @nakake/gpui-bindings.ABI_VERSION,
     @nakake/gpui-bindings.EVENT_NAMED_KEY,
     0,
@@ -144,7 +144,7 @@ fn main {
     failed.push(1)
   }
   // Cmd+Z 走 on_key 路径
-  let _ = @mdmbt/editor/adapter.dispatch(
+  let _ = @mdmbt/adapter.dispatch(
     @nakake/gpui-bindings.ABI_VERSION,
     @nakake/gpui-bindings.EVENT_KEY,
     0,
@@ -170,11 +170,11 @@ fn main {
       println("BAD: task text unit not found")
       failed.push(1)
     } else {
-      let _ = @mdmbt/editor/adapter.dispatch(
+      let _ = @mdmbt/adapter.dispatch(
         @nakake/gpui-bindings.ABI_VERSION,
         @nakake/gpui-bindings.EVENT_CLICK,
         0,
-        @mdmbt/editor/adapter.click_id_of(item_u),
+        @mdmbt/adapter.click_id_of(item_u),
         0,
       )
       let d = dump0()
@@ -202,11 +202,11 @@ fn main {
       println("BAD: task text unit not found (token test)")
       failed.push(1)
     } else {
-      let _ = @mdmbt/editor/adapter.dispatch(
+      let _ = @mdmbt/adapter.dispatch(
         @nakake/gpui-bindings.ABI_VERSION,
         @nakake/gpui-bindings.EVENT_CLICK,
         0,
-        @mdmbt/editor/adapter.token_click_id_of(item_u2, 1),
+        @mdmbt/adapter.token_click_id_of(item_u2, 1),
         0,
       )
       let d = dump0()
@@ -232,22 +232,22 @@ fn main {
     println("BAD: task unit not found")
     failed.push(1)
   } else {
-    let before = @mdmbt/editor/adapter.dump()
-    let _ = @mdmbt/editor/adapter.dispatch(
+    let before = @mdmbt/adapter.dump()
+    let _ = @mdmbt/adapter.dispatch(
       @nakake/gpui-bindings.ABI_VERSION,
       @nakake/gpui-bindings.EVENT_CLICK,
       0,
-      @mdmbt/editor/adapter.box_id_of(task_u),
+      @mdmbt/adapter.box_id_of(task_u),
       0,
     )
-    if @mdmbt/editor/adapter.dump().contains("- [ ] 已完成任务") {
+    if @mdmbt/adapter.dump().contains("- [ ] 已完成任务") {
       println("  ok: checkbox click toggled task")
     } else {
       println("BAD: checkbox click did not toggle (before=\{before})")
       failed.push(1)
     }
     ed.undo()
-    if !@mdmbt/editor/adapter.dump().contains("- [ ] 已完成任务") {
+    if !@mdmbt/adapter.dump().contains("- [ ] 已完成任务") {
       println("  ok: undo restored checkbox")
     } else {
       println("BAD: undo did not restore checkbox")
@@ -278,7 +278,7 @@ fn main {
       }
       @core.doc_insert(b2, s2, "规则标题")
     })
-    if @mdmbt/editor/adapter.dump().contains("# 规则标题") {
+    if @mdmbt/adapter.dump().contains("# 规则标题") {
       println("  ok: space rule produced heading")
     } else {
       println("BAD: serialize missing '# 规则标题'")
@@ -304,7 +304,7 @@ fn main {
       }))
     })
     @nakake/gpui-bindings.expect_ok(
-      @mdmbt/editor/adapter.build_tree(0),
+      @mdmbt/adapter.build_tree(0),
       "rebuild after reparse",
     )
     let rdump = dump0()
@@ -320,34 +320,34 @@ fn main {
     ed.undo()
   }
   // --- Cmd+A + Cmd+B：选区加粗走真实 on_key 事件 ------------------------
-  let _ = @mdmbt/editor/adapter.dispatch(
+  let _ = @mdmbt/adapter.dispatch(
     @nakake/gpui-bindings.ABI_VERSION,
     @nakake/gpui-bindings.EVENT_KEY,
     0,
     'a'.to_int(),
     @nakake/gpui-bindings.MOD_PLATFORM,
   )
-  let _ = @mdmbt/editor/adapter.dispatch(
+  let _ = @mdmbt/adapter.dispatch(
     @nakake/gpui-bindings.ABI_VERSION,
     @nakake/gpui-bindings.EVENT_KEY,
     0,
     'b'.to_int(),
     @nakake/gpui-bindings.MOD_PLATFORM,
   )
-  if @mdmbt/editor/adapter.dump().contains("**md_mbt 编辑器演示**") {
+  if @mdmbt/adapter.dump().contains("**md_mbt 编辑器演示**") {
     println("  ok: Cmd+A + Cmd+B bolded whole doc")
   } else {
     println("BAD: Cmd+B did not bold selection")
     failed.push(1)
   }
-  let _ = @mdmbt/editor/adapter.dispatch(
+  let _ = @mdmbt/adapter.dispatch(
     @nakake/gpui-bindings.ABI_VERSION,
     @nakake/gpui-bindings.EVENT_KEY,
     0,
     'z'.to_int(),
     @nakake/gpui-bindings.MOD_PLATFORM,
   )
-  if !@mdmbt/editor/adapter.dump().contains("**md_mbt 编辑器演示**") {
+  if !@mdmbt/adapter.dump().contains("**md_mbt 编辑器演示**") {
     println("  ok: Cmd+Z undid bold")
   } else {
     println("BAD: undo did not restore bold state")
@@ -363,14 +363,14 @@ fn main {
         failed.push(1)
       }
     }
-    let r_o = @mdmbt/editor/adapter.dispatch(
+    let r_o = @mdmbt/adapter.dispatch(
       @nakake/gpui-bindings.ABI_VERSION,
       @nakake/gpui-bindings.EVENT_KEY,
       0,
       'o'.to_int(),
       @nakake/gpui-bindings.MOD_PLATFORM,
     )
-    if r_o != 1 || !@mdmbt/editor/adapter.dialog_shown() {
+    if r_o != 1 || !@mdmbt/adapter.dialog_shown() {
       println("BAD: Cmd+O did not open path bar (ret=\{r_o})")
       failed.push(1)
     } else {
@@ -379,22 +379,22 @@ fn main {
     }
     // EVENT_TEXT 需要 Rust 侧 payload 队列（外部注入不进来），打开动作
     // 直接调 open_path——与路径栏按 Enter 的确认入口是同一函数。
-    match @mdmbt/editor/adapter.open_path(tmp) {
+    match @mdmbt/adapter.open_path(tmp) {
       Ok(_) => {
         @nakake/gpui-bindings.expect_ok(
-          @mdmbt/editor/adapter.build_tree(0),
+          @mdmbt/adapter.build_tree(0),
           "rebuild after open_path",
         )
         let d = dump0()
         check("自检外部文档", d)
         check("来自打开功能的测试内容", d)
-        if @mdmbt/editor/adapter.current_path() == tmp {
+        if @mdmbt/adapter.current_path() == tmp {
           println("  ok: opened file tracked as current")
         } else {
           println("BAD: current_path not tracked")
           failed.push(1)
         }
-        if @mdmbt/editor/adapter.dialog_shown() {
+        if @mdmbt/adapter.dialog_shown() {
           println("BAD: dialog should close on successful open")
           failed.push(1)
         }
@@ -412,7 +412,7 @@ fn main {
       offset: us[last].plain.to_array().length(),
     }))
     ed.apply_text("selftest-save", fn(b, s) { @core.doc_insert(b, s, "回写验证") })
-    let _ = @mdmbt/editor/adapter.dispatch(
+    let _ = @mdmbt/adapter.dispatch(
       @nakake/gpui-bindings.ABI_VERSION,
       @nakake/gpui-bindings.EVENT_KEY,
       0,
@@ -426,7 +426,7 @@ fn main {
       println("BAD: Cmd+S did not persist")
       failed.push(1)
     }
-    if @mdmbt/editor/adapter.dialog_shown() {
+    if @mdmbt/adapter.dialog_shown() {
       println("BAD: successful save should not open path bar")
       failed.push(1)
     }

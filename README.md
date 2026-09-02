@@ -8,8 +8,12 @@ Rust staticlib → Zed GPUI）。架构参考
 
 ## 分层
 
+工程为 moon.work 多模块工作区（moon.mod.json + moon.pkg），四个成员模块，
+依赖只能单向：core ← adapter ← main / selftest。
+
 ```
-core/      纯逻辑编辑内核（零 GUI / 零 FFI 依赖，core/moon.pkg 无任何 import）
+core/      独立模块 mdmbt/core：纯逻辑编辑内核（零 GUI / 零 FFI 依赖，
+           moon.mod.json 无 deps、moon.pkg 无任何 import——验收标准 4 可包结构直查）
   mark.mbt     Marks：粗体/斜体/删除线/行内代码/链接 位样式
   inline.mbt   扁平样式 run 数组 + 原子节点（Link/Image/Footnote）与切分/插入/样式 toggle
   block.mbt    块树类型：Heading(1-6)/Paragraph/List(有序·无序·任务·嵌套)/Quote/
@@ -28,7 +32,8 @@ core/      纯逻辑编辑内核（零 GUI / 零 FFI 依赖，core/moon.pkg 无�
   mdwrite.mbt  规范化序列化；对稳定子集保证 parse→serialize→parse 幂等
   strutil.mbt  字符串工具（本工具链 String API 的垫片）
 
-adapter/   GPUI 适配层（独立包，import core + gpui-bindings，不 import link 包）
+adapter/   独立模块 mdmbt/adapter：GPUI 适配层（import core + gpui-bindings，
+           不 import link，故可 `moon test`）
   render.mbt   块树 → gpui 命令缓冲：文本单元按 token（CJK 逐字/拉丁逐词）拆成
                可点击 div、任务框独立点击区、rich_text 多 run 样式、光标段、
                选区高亮、表头加粗、代码块 lang 标签、表格定宽列、Cmd+O 路径栏；
@@ -43,8 +48,13 @@ adapter/   GPUI 适配层（独立包，import core + gpui-bindings，不 import
                可滚动容器（OVERFLOW_SCROLL + set_key 跨重建保位）、
                rebuild/dispatch 入口
 
-main/      装配：register_dispatch → build_tree → run_window（唯一链接 Rust staticlib 的包）
-selftest/  无 GUI 自检：build_tree(0) + debug_dump_text 回读 + 事件注入，走真实 FFI
+main/      独立模块 mdmbt/main：demo 装配，register_dispatch → build_tree →
+           run_window（import link 链接 Rust staticlib，仅 main.mbt）
+selftest/  独立模块 mdmbt/selftest：无 GUI 自检，build_tree(0) + debug_dump_text
+           回读 + 事件注入，走真实 FFI
+
+gpui-moonbit 以 vendored 路径依赖引入（third_party/，git submodule），不是工作区
+成员——根目录 `moon test` 因此不会扫到它的示例与测试。
 ```
 
 ## 构建与运行

@@ -1,0 +1,12 @@
+options(
+  is_main: true,
+  warn_list: "-29",
+)
+
+import {
+  "nakake/gpui-bindings",
+  "nakake/gpui-bindings/link",
+  "mdmbt/adapter",
+  "mdmbt/core" @core,
+  "moonbitlang/x/fs",
+}

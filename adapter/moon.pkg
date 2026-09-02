@@ -1,0 +1,7 @@
+import {
+  "mdmbt/core" @core,
+  "nakake/gpui-bindings" @gpui,
+  "moonbitlang/core/env",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/x/fs",
+}

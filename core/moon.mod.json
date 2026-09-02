@@ -1,0 +1,6 @@
+{
+  "name": "mdmbt/core",
+  "version": "0.1.0",
+  "description": "md-core：纯逻辑 Markdown WYSIWYG 编辑内核（零 GUI / 零 FFI，moon.pkg 无任何 import）",
+  "preferred-target": "native"
+}

@@ -17,6 +17,20 @@ fn char_len(s : String) -> Int {
 }
 
 ///|
+/// 文本是否含有空白之外的真实内容。软换行/空格视为无内容：
+/// 批量删除的回退光标只会从左向右越过它们一次，软换行可能作为
+/// 合并接缝的残留停在选区起点块的右侧删不到，扫尾据此判空。
+fn has_content(s : String) -> Bool {
+  let mut found = false
+  for ch in s.to_array() {
+    if ch != ' ' && ch != '\n' && ch != '\t' && ch != '\r' {
+      found = true
+    }
+  }
+  found
+}
+
+///|
 fn str_replace_range(
   s : String,
   start : Int,
@@ -82,10 +96,16 @@ pub fn doc_delete(blocks : Array[Block], sel : Sel) -> (Array[Block], Caret) {
     return (bs, sel_start(s))
   }
   let mut bs = blocks
+  // 全选判定的参照：循环开始前文档的终点（归一化时校验选区确实罩住全文）。
+  let us0 = collect_units(blocks)
+  let orig_tail = Caret::{
+    unit: us0.length() - 1,
+    offset: if us0.length() > 0 { char_len(us0[us0.length() - 1].plain) } else { 0 },
+  }
   let mut c = b
   let mut budget = 0
   while c.cmp(a) > 0 && budget < 100_000 {
-    let (bs2, c2) = backspace_one(bs, c)
+    let (bs2, c2) = backspace_one(bs, c, Some(b))
     budget = budget + 1
     if c2.cmp(c) >= 0 {
       break
@@ -93,7 +113,66 @@ pub fn doc_delete(blocks : Array[Block], sel : Sel) -> (Array[Block], Caret) {
     bs = bs2
     c = c2
   }
-  (doc_ensure(bs), a)
+  // 主循环自 b 逐字回删至 a，遇顶层块边界（原子块/表格/容器首格无法
+  // 与前块合并）会 break；罩在选区内的块其内容已被循环清空。收尾：凡被
+  // 选区完整罩住且内容已全空的顶层块（空表格/空引文/空列表/尾部 ---）
+  // 整体移除——否则全选删除会遗留空壳块。a 所在块只在原子块/表格时移除
+  // （空段落不删：段内删字 ≠ 整段并入下一段）。
+  let mut swept = true
+  while swept {
+    swept = false
+    let us_f = collect_units(bs)
+    let mut ui = 0
+    while ui < us_f.length() {
+      let top = us_f[ui].top_index
+      let mut li = ui
+      while li + 1 < us_f.length() && us_f[li + 1].top_index == top {
+        li = li + 1
+      }
+      let head = Caret::{ unit: ui, offset: 0 }
+      let tail = Caret::{ unit: li, offset: char_len(us_f[li].plain) }
+      let mut all_empty = true
+      let mut i = ui
+      while i <= li && all_empty {
+        if has_content(us_f[i].plain) {
+          all_empty = false
+        }
+        i = i + 1
+      }
+      let self_ok = ui > a.unit ||
+        us_f[ui].kind == AtomicU ||
+        us_f[ui].kind == CellU
+      if self_ok && a.cmp(head) <= 0 && b.cmp(tail) >= 0 && all_empty {
+        bs = map_top_block(bs, top, fn(_) { None })
+        swept = true
+        break // 顶层下标整体位移，重新收集再扫
+      }
+      ui = li + 1
+    }
+  }
+  // 全选归一化：选区从全文首罩到全文尾（doc_select_all 的形态）时，残留
+  // 的最后一块（a 所在块不参与扫尾删除）若只剩空白（如代码块合并接缝
+  // 遗留的软换行、清空后的标题壳），统一归一为一个空段落——否则
+  // [Heading([])] 序列化为 "# " 不是空文档，且非空渲染路径会把光标画歪。
+  let us_c = collect_units(bs)
+  if us_c.length() == 1 &&
+    !has_content(us_c[0].plain) &&
+    a.cmp(Caret::{ unit: 0, offset: 0 }) <= 0 &&
+    b.cmp(orig_tail) >= 0 {
+    bs = [Paragraph([])]
+  }
+  // 扫尾可能删掉 a 所在块（原子块/表格），钳回合法插入点。
+  let usr = collect_units(bs)
+  let mut ca = a
+  if ca.unit >= usr.length() {
+    let last = usr.length() - 1
+    ca = if last < 0 {
+      Caret::{ unit: 0, offset: 0 }
+    } else {
+      Caret::{ unit: last, offset: char_len(usr[last].plain) }
+    }
+  }
+  (doc_ensure(bs), ca)
 }
 
 ///|
@@ -103,7 +182,7 @@ pub fn doc_backspace(blocks : Array[Block], sel : Sel) -> (Array[Block], Sel) {
     let (bs, c) = doc_delete(blocks, sel)
     (bs, collapsed_sel(c))
   } else {
-    let (bs, c) = backspace_one(blocks, sel.focus)
+    let (bs, c) = backspace_one(blocks, sel.focus, None)
     (doc_ensure(bs), collapsed_sel(c))
   }
 }
@@ -133,7 +212,10 @@ pub fn doc_delete_forward(
       doc_ensure(bs),
       collapsed_sel(Caret::{ unit: if cu < 0 { 0 } else { cu }, offset: off }),
     )
-  } else if u.kind == CellU && c.offset >= char_len(u.plain) && c.unit + 1 < us.length() && us[c.unit + 1].kind == CellU {
+  } else if u.kind == CellU &&
+    c.offset >= char_len(u.plain) &&
+    c.unit + 1 < us.length() &&
+    us[c.unit + 1].kind == CellU {
     // 格尾前向删除：光标移到下一格首，不动内容
     (blocks, collapsed_sel(Caret::{ unit: c.unit + 1, offset: 0 }))
   } else if c.offset < char_len(u.plain) {
@@ -147,7 +229,11 @@ pub fn doc_delete_forward(
     (doc_ensure(bs), collapsed_sel(c))
   } else if c.unit + 1 < us.length() {
     // 单元末尾: 等价于把下一单元合并进来（对下一单元起点 backspace）
-    let (bs, c2) = backspace_one(blocks, Caret::{ unit: c.unit + 1, offset: 0 })
+    let (bs, c2) = backspace_one(
+      blocks,
+      Caret::{ unit: c.unit + 1, offset: 0 },
+      None,
+    )
     (doc_ensure(bs), collapsed_sel(c2))
   } else {
     (blocks, collapsed_sel(c))
@@ -155,9 +241,17 @@ pub fn doc_delete_forward(
 }
 
 // 删除 caret 前的一个字符 / 一个原子块 / 执行一次合并。
+// bulk_end = 选区驱动的批量删除（doc_delete 的循环）携带的选区终点：抵达
+// 表格首格格头且选区罩到表尾时整表删除（单元格没有 remove_self，常规合并
+// 只会清空首格、遗留整张空表）；选区未罩住全表则原地不动，由主循环的单调
+// 守卫终止、交给 doc_delete 的扫尾处理。普通交互式退格 bulk_end=None。
 
 ///|
-fn backspace_one(blocks : Array[Block], c : Caret) -> (Array[Block], Caret) {
+fn backspace_one(
+  blocks : Array[Block],
+  c : Caret,
+  bulk_end : Caret?,
+) -> (Array[Block], Caret) {
   let us = collect_units(blocks)
   if c.unit < 0 || c.unit >= us.length() {
     return (blocks, c)
@@ -187,7 +281,43 @@ fn backspace_one(blocks : Array[Block], c : Caret) -> (Array[Block], Caret) {
     )
   } else if u.kind == CellU && c.unit > 0 && us[c.unit - 1].kind == CellU {
     // 格首退格：只把光标移进上一格尾，不并内容（避免搬空留幽灵格）
-    (blocks, Caret::{ unit: c.unit - 1, offset: char_len(us[c.unit - 1].plain) })
+    (
+      blocks,
+      Caret::{ unit: c.unit - 1, offset: char_len(us[c.unit - 1].plain) },
+    )
+  } else if u.kind == CellU && (c.unit == 0 || us[c.unit - 1].kind != CellU) {
+    // 表格首格格头退格。选区删除（bulk_end）罩到本表最后一格末尾时，
+    // 整表与原子块同语义一并删除；未罩全表（部分选区/普通退格）不动，
+    // 主循环单调守卫会因此终止，由 doc_delete 扫尾按覆盖情况处置。
+    match bulk_end {
+      Some(be) => {
+        let mut e = c.unit
+        while e + 1 < us.length() && us[e + 1].kind == CellU {
+          e = e + 1
+        }
+        if be.cmp(Caret::{ unit: e, offset: char_len(us[e].plain) }) >= 0 {
+          let bs = map_top_block(blocks, u.top_index, fn(_) { None })
+          let us2 = collect_units(bs)
+          let target = if c.unit > 0 {
+            (c.unit - 1).min(us2.length() - 1)
+          } else {
+            0
+          }
+          let off = if us2.length() > 0 {
+            char_len(us2[if target >= 0 { target } else { 0 }].plain)
+          } else {
+            0
+          }
+          (
+            doc_ensure(bs),
+            Caret::{ unit: if target >= 0 { target } else { 0 }, offset: off },
+          )
+        } else {
+          (blocks, c)
+        }
+      }
+      None => (blocks, c)
+    }
   } else if c.unit == 0 {
     (blocks, c)
   } else {
@@ -197,7 +327,17 @@ fn backspace_one(blocks : Array[Block], c : Caret) -> (Array[Block], Caret) {
     //      （列表项连同 children 删除、末项删除时整个列表块消失）
     let prev = us[c.unit - 1]
     let joined = if prev.kind == CodeU || u.kind == CodeU {
-      (prev.set_plain)(prev.plain + "\n" + u.plain)
+      // 软换行分隔符只在有真实内容并入时添加：批量删除抵达块首时
+      // u.plain 已恒为空，此时注入的 "\n" 落进接缝右侧，回退光标再也
+      // 删不到它，全选删除会遗留「纯换行」幽灵块（巨型光标条 bug 根因）。
+      let merged = if u.plain == "" {
+        prev.plain
+      } else if prev.plain == "" {
+        u.plain
+      } else {
+        prev.plain + "\n" + u.plain
+      }
+      (prev.set_plain)(merged)
     } else {
       (prev.set_inlines)(inlines_concat(prev.inlines, u.inlines))
     }
@@ -401,7 +541,11 @@ pub fn doc_block_op(
     [
       ListBlock(kind, [
         {
-          checked: if kind == Task { Some(false) } else { None },
+          checked: if kind == Task {
+            Some(false)
+          } else {
+            None
+          },
           content: inls,
           children: [],
         },
@@ -412,7 +556,12 @@ pub fn doc_block_op(
   let repl : Array[Block] = match op {
     SetHeading(lv) =>
       match cur {
-        Heading(l, inls) => if l == lv { [Paragraph(inls)] } else { [Heading(lv, inls)] }
+        Heading(l, inls) =>
+          if l == lv {
+            [Paragraph(inls)]
+          } else {
+            [Heading(lv, inls)]
+          }
         Paragraph(inls) => [Heading(lv, inls)]
         other => [other]
       }
@@ -463,12 +612,15 @@ pub fn total_units(bs : Array[Block]) -> Int {
   n
 }
 
+///|
 fn retag(items : Array[Item], kind : ListKind) -> Array[Item] {
-  items.map(it => {
-    Item::{
-      ..it,
-      checked: if kind == Task { Some(false) } else { None },
-    }
+  items.map(it => Item::{
+    ..it,
+    checked: if kind == Task {
+      Some(false)
+    } else {
+      None
+    },
   })
 }
 

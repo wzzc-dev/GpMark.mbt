@@ -20,6 +20,9 @@ adapter/core 侧采取的绕行方案。按发现顺序记录。
      虚拟点击区。折行由 MoonBit 侧按估算宽度自算（见缺口 4）。
   这是无坐标约束下“点哪停哪”的最大逼近：CJK 精确到字、拉丁精确到词，
   词/字之内无法再细分。
+- **已解（词内精确）**：桥层新增鼠标回传 + 几何探针拉取通道（见缺口 14），
+  按下/拖拽坐标与真实布局矩形同帧可得，命中按像素比例插值到词内；token
+  点击通道保留为退化路径（代码块等无探针几何的区域）。
 
 ## 2. 无内联文本编辑控件可用（编辑器模式）
 
@@ -76,10 +79,12 @@ Enter/Backspace 自定义拦截（widget 会吞掉这些键，见 lib.rs
 - **绕行**：初始化全部内联在初始化表达式里（`Array::make(n, 0)`），
   且注册 keep-alive 一律经由被 `rebuild/dispatch` 实际引用的值。
 
-## 7. 事件回调单入口，无 hover/右键/拖拽
+## 7. 事件回调单入口，无 hover/右键
 
-`register_dispatch` 只有一个 C 回调；未提供 mouse-move/drag/context-menu。
-- **影响**：无法用鼠标拖拽选区、右键菜单。选区只能靠 Shift+方向键。
+`register_dispatch` 只有一个 C 回调；无 hover、context-menu。
+- **已解（拖拽）**：gpui-sys 根 div 上的左键 down/up + dragging-move 监听
+  把事件封装成 EVENT_ASYNC 鼠标负载回传，鼠标拖拽选区已实现（缺口 14）。
+- **仍存**：hover、右键菜单。选区的键盘路径（Shift+方向键）照常可用。
 
 ## 8. Tab 键被焦点遍历吃掉，无法送达 MoonBit
 
@@ -173,11 +178,11 @@ widget，见缺口 2）。库包又不能加 `cc-link-flags`（会令 moon 误�
 - **候选窗锚点**（已修复）：`InputHandler::bounds_for_range` 只能给几何，
   桥层本无应用文本度量、旧实现固定返回视口左下锚点。现由应用声明几何：
   渲染层把光标覆盖层 div `set_key("caret")`，gpui-sys 的 render_node 对带
-  该 key 的 div 包一层透明 `CaretBoundsProbe`（仿 `TextGlyphInset`：布局
-  全权委托子节点，仅 prepaint 时把窗口坐标矩形写入 `IME_CARET_BOUNDS`），
-  `bounds_for_range` 返回它——mac 窗口据此换算屏幕 firstRect，候选窗/组词
-  预览跟随光标。探针是纯附加 Rust 改动（不动 C ABI），key 契约由
-  render_wbtest 断言锁定。
+  `caret`/`probe:*` key 的 div 包一层透明 `ProbeBoundsProbe`（仿
+  `TextGlyphInset`：布局全权委托子节点，仅 prepaint 时把窗口坐标矩形记入
+  `PROBE_BOUNDS` 表，见缺口 14），`bounds_for_range` 返回 "caret" 项——mac
+  窗口据此换算屏幕 firstRect，候选窗/组词预览跟随光标。探针是纯附加 Rust
+  改动（不动 C ABI），key 契约由 render_wbtest 断言锁定。
 - **教训（已修复）**：输入源判定最早用 `kTISPropertyInputSourceID` 的
   `com.apple.inputmethod.` 前缀，漏掉第三方输入法（搜狗 `com.sogou.*`、
   微信 `com.tencent.inputmethod.wetype`）——可打印键被 raw `typed_text` 与
@@ -201,3 +206,38 @@ widget，见缺口 2）。库包又不能加 `cc-link-flags`（会令 moon 误�
 窗口顶部常驻一排：左侧应用名 + 当前文件名（未关联显示 Untitled.md），
 右侧 New / Open / Save 按钮（New 清空为新文档，Open/Save 与 Cmd+O/Cmd+S
 同一路径；打开/保存走系统文件选择框，见缺口 11）。
+
+## 14. 鼠标事件与几何回传通道（拖拽选区，本期已解）
+
+框架只有无坐标的 click（缺口 1）与滚轮。本期在 gpui-sys 里加了两条**纯附加**
+通道（不动 C ABI，不动 MoonBit 绑定层的既有语义），实现鼠标拖拽选区与词内
+像素级落点：
+
+- **鼠标回传（推）**：`FfiView::render` 的根 div 上挂 `on_mouse_down(Left)`
+  / `on_mouse_up(Left)` / `on_mouse_move`（仅 `dragging()` 时转发），把事件
+  封装成 EVENT_ASYNC 负载 `[0xEF, phase, x i32LE, y i32LE]`（phase 0 按下/
+  1 拖拽移动/2 释放，坐标取整像素避开 f32 位解码）。既有 click 通道照常
+  合成、照常送达，互不干扰。
+- **几何拉取（拉）**：渲染层给每个 token / 行尾空白区 div 挂
+  `set_key("probe:t{gen}:{unit}:{ti}")` / `("probe:x…")`；render_node 对
+  `caret` / `probe:*` key 的 div 包透明 `ProbeBoundsProbe`，prepaint 时把
+  真实布局矩形（窗口坐标）写入 `PROBE_BOUNDS: HashMap<String,[f32;4]>`。
+  MoonBit 经 `gpui_probe_rect(key, out)` 拉回，行匹配 + 区间内水平插值得到
+  插入点（`adapter/hit.mbt`）。
+- **失效策略**：key 带代号 `gen`（每次 rebuild 递增）；root 的首个零尺寸
+  子节点带 `probe:clear`，prepaint 命中即清表——读到的永远是当帧几何，
+  滚动/重建后不会拿旧矩形命中错行。
+- **合成 click 的协调**：按下已按像素比例精确落点，紧随其后的合成 token
+  click 会被 `mouse_placed`（未拖拽）/`drag_moved`（拖过）一次性压制——
+  否则粗粒度的 token 起点定位会覆盖精确定位、或抹掉刚拖出的选区。
+
+**教训（重要）**：
+
+- **探针嵌套死锁**：`ProbeBoundsProbe::prepaint` 若在持 `PROBE_BOUNDS` 锁
+  时调 `child.prepaint`，嵌套探针（token div 里含 caret 覆盖层，两者都带
+  key）会二次加锁，std Mutex 不可重入 → 启动首帧即死锁、窗口永不出现。
+  锁必须收窄到「记录自己」为止，再放锁下钻。
+- **moon 增量不追踪外部 staticlib**：改完 gpui-sys 的 Rust 代码后
+  `moon build` 提示 "up to date"，**不会重新链接**新的 libgpui_sys.a，
+  dist 里跑的还是旧二进制。改过 Rust 侧必须 `moon clean` 再构建（或删
+  `_build`），否则一切 GUI 验证都在测旧版本。

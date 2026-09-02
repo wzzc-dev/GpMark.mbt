@@ -14,10 +14,12 @@ pub(all) enum SpaceRule {
   TaskR(Bool)
 } derive(Eq, Debug)
 
+///|
 fn is_space_ch(c : Char) -> Bool {
   c == ' '
 }
 
+///|
 fn is_digit_ch(c : Char) -> Bool {
   c >= '0' && c <= '9'
 }
@@ -80,15 +82,13 @@ pub fn rule_at_plain(plain : String, off : Int) -> SpaceRule? {
   None
 }
 
+///|
 fn prefix_is_plain(inls : Array[Inline], n : Int) -> Bool {
   let (left, _) = inlines_split_at(inls, n)
   let mut ok = true
   for x in left {
     match x {
-      Run(_, m) =>
-        if !m.is_plain() {
-          ok = false
-        }
+      Run(_, m) => if !m.is_plain() { ok = false }
       _ => ok = false
     }
   }
@@ -131,14 +131,18 @@ pub fn doc_apply_space_rule(
             let nb : Block = match rule {
               HLevel(l) => Heading(l, rest)
               BulletR =>
-                ListBlock(Bullet, [{ checked: None, content: rest, children: [] }])
+                ListBlock(Bullet, [
+                  { checked: None, content: rest, children: [] },
+                ])
               OrderedR(n) =>
                 ListBlock(Ordered(n), [
                   { checked: None, content: rest, children: [] },
                 ])
               QuoteR => Quote([Paragraph(rest)])
               TaskR(b) =>
-                ListBlock(Task, [{ checked: Some(b), content: rest, children: [] }])
+                ListBlock(Task, [
+                  { checked: Some(b), content: rest, children: [] },
+                ])
             }
             let _ = plain_len
             let bs = map_top_block(blocks, top, fn(_) { Some(nb) })
@@ -150,11 +154,9 @@ pub fn doc_apply_space_rule(
                 if l == l2 {
                   noop
                 } else {
-                  let bs = map_top_block(
-                    blocks,
-                    top,
-                    fn(_) { Some(Heading(l2, rest)) },
-                  )
+                  let bs = map_top_block(blocks, top, fn(_) {
+                    Some(Heading(l2, rest))
+                  })
                   (bs, collapsed_sel(Caret::{ unit: c.unit, offset: 0 }), true)
                 }
               _ => noop
@@ -167,10 +169,12 @@ pub fn doc_apply_space_rule(
 
 // --- Enter 规则 -------------------------------------------------------------
 
+///|
 fn is_lang_ch(c : Char) -> Bool {
   (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || is_digit_ch(c) || c == '-'
 }
 
+///|
 fn fence_lang_at(plain : String, off : Int) -> String? {
   let cs = plain.to_array()
   if off != cs.length() || cs.length() < 3 {
@@ -196,6 +200,7 @@ fn fence_lang_at(plain : String, off : Int) -> String? {
   }
 }
 
+///|
 fn is_hr_text(plain : String) -> Bool {
   let cs = plain.to_array()
   if cs.length() < 3 {
@@ -218,13 +223,22 @@ fn is_hr_text(plain : String) -> Bool {
 /// 单元计数（与 collect_units 的产出顺序/数量严格一致）。
 pub fn count_units_of(b : Block) -> Int {
   match b {
-    Heading(_, _) | Paragraph(_) | CodeBlock(_, _) | Hr | ImageBlock(_, _) | Raw(_) => 1
+    Heading(_, _)
+    | Paragraph(_)
+    | CodeBlock(_, _)
+    | Hr
+    | ImageBlock(_, _)
+    | Raw(_) => 1
     Quote(inner) => {
       let mut s = 0
       for x in inner {
         s = s + count_units_of(x)
       }
-      if s == 0 { 1 } else { s }
+      if s == 0 {
+        1
+      } else {
+        s
+      }
     }
     ListBlock(_, items) => {
       let mut s = 0
@@ -249,10 +263,7 @@ pub fn count_units_of(b : Block) -> Int {
 ///|
 /// 定位折叠光标所在单元是否是「顶层列表项的内容单元」。
 /// 返回 (顶层块下标, 项下标, 项总数)；嵌套列表项返回 None（v1 从简）。
-pub fn locate_top_item(
-  blocks : Array[Block],
-  unit : Int,
-) -> (Int, Int, Int)? {
+pub fn locate_top_item(blocks : Array[Block], unit : Int) -> (Int, Int, Int)? {
   let us = collect_units(blocks)
   if unit < 0 || unit >= us.length() {
     return None
@@ -299,7 +310,11 @@ pub fn locate_top_item(
 
 ///|
 /// 把顶层块 `i` 替换为多块。
-pub fn splice_top(bs : Array[Block], i : Int, repl : Array[Block]) -> Array[Block] {
+pub fn splice_top(
+  bs : Array[Block],
+  i : Int,
+  repl : Array[Block],
+) -> Array[Block] {
   let out : Array[Block] = []
   for k = 0; k < bs.length(); k = k + 1 {
     if k == i {
@@ -372,24 +387,24 @@ pub fn doc_apply_enter_rules(
           ListBlock(kd, _) => kd
           _ => return None
         }
-        let (before, after, children) : (Array[Item], Array[Item], Array[Block]) =
-          match blocks[t] {
-            ListBlock(_, items) => {
-              if j >= items.length() {
-                return None
-              }
-              let b0 : Array[Item] = []
-              for k = 0; k < j; k = k + 1 {
-                b0.push(items[k])
-              }
-              let a0 : Array[Item] = []
-              for k = j + 1; k < items.length(); k = k + 1 {
-                a0.push(items[k])
-              }
-              (b0, a0, items[j].children)
+        let (before, after, children) : (Array[Item], Array[Item], Array[Block]) = match
+          blocks[t] {
+          ListBlock(_, items) => {
+            if j >= items.length() {
+              return None
             }
-            _ => return None
+            let b0 : Array[Item] = []
+            for k = 0; k < j; k = k + 1 {
+              b0.push(items[k])
+            }
+            let a0 : Array[Item] = []
+            for k = j + 1; k < items.length(); k = k + 1 {
+              a0.push(items[k])
+            }
+            (b0, a0, items[j].children)
           }
+          _ => return None
+        }
         let nb : Array[Block] = []
         if n == 1 {
           for ch in children {
@@ -447,10 +462,7 @@ pub fn doc_apply_enter_rules(
 
 ///|
 /// Cmd+Enter：从代码块出逃——在代码块后插段落并聚焦。
-pub fn doc_code_escape(
-  blocks : Array[Block],
-  sel : Sel,
-) -> (Array[Block], Sel) {
+pub fn doc_code_escape(blocks : Array[Block], sel : Sel) -> (Array[Block], Sel) {
   let us = collect_units(blocks)
   let c = sel.focus
   if c.unit < 0 || c.unit >= us.length() || us[c.unit].kind != CodeU {
@@ -496,14 +508,17 @@ pub fn doc_paste(
 
 // --- 词移动 -----------------------------------------------------------------
 
+///|
 fn is_word_ch(c : Char) -> Bool {
   (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || is_digit_ch(c) || c == '_'
 }
 
+///|
 fn is_cjk_ch(c : Char) -> Bool {
   (c >= '\u{4e00}' && c <= '\u{9fff}') || (c >= '\u{3400}' && c <= '\u{4dbf}')
 }
 
+///|
 fn word_left(cs : Array[Char], o : Int) -> Int {
   let mut i = o
   while i > 0 && is_space_ch(cs[i - 1]) {
@@ -521,6 +536,7 @@ fn word_left(cs : Array[Char], o : Int) -> Int {
   i
 }
 
+///|
 fn word_right(cs : Array[Char], o : Int) -> Int {
   let n = cs.length()
   let mut i = o
@@ -559,26 +575,25 @@ pub fn doc_move_word(
       let cs = us[cu].plain.to_array()
       let len = cs.length()
       let co = if base.offset > len { len } else { base.offset }
-      let np =
-        if dir == Left {
-          let o = word_left(cs, co)
-          if o < co {
-            Caret::{ unit: cu, offset: o }
-          } else if cu > 0 {
-            Caret::{ unit: cu - 1, offset: char_len(us[cu - 1].plain) }
-          } else {
-            base
-          }
+      let np = if dir == Left {
+        let o = word_left(cs, co)
+        if o < co {
+          Caret::{ unit: cu, offset: o }
+        } else if cu > 0 {
+          Caret::{ unit: cu - 1, offset: char_len(us[cu - 1].plain) }
         } else {
-          let o = word_right(cs, co)
-          if o > co {
-            Caret::{ unit: cu, offset: o }
-          } else if cu + 1 < n {
-            Caret::{ unit: cu + 1, offset: 0 }
-          } else {
-            base
-          }
+          base
         }
+      } else {
+        let o = word_right(cs, co)
+        if o > co {
+          Caret::{ unit: cu, offset: o }
+        } else if cu + 1 < n {
+          Caret::{ unit: cu + 1, offset: 0 }
+        } else {
+          base
+        }
+      }
       if extend {
         { anchor: sel.anchor, focus: np }
       } else {
@@ -593,10 +608,7 @@ pub fn doc_move_word(
 
 ///|
 /// 切换光标所在顶层任务项的勾选态。
-pub fn doc_toggle_task(
-  blocks : Array[Block],
-  sel : Sel,
-) -> (Array[Block], Sel) {
+pub fn doc_toggle_task(blocks : Array[Block], sel : Sel) -> (Array[Block], Sel) {
   match locate_top_item(blocks, sel.focus.unit) {
     None => (blocks, sel)
     Some((t, j, _)) =>
@@ -636,54 +648,49 @@ pub fn doc_indent(blocks : Array[Block], sel : Sel) -> (Array[Block], Sel) {
       if j == 0 {
         (blocks, sel)
       } else {
-        let bs = map_top_block(
-          blocks,
-          t,
-          fn(b) {
-            match b {
-              ListBlock(kind, items) =>
-                if j < items.length() {
-                  let it = items[j]
-                  let prev = items[j - 1]
-                  let kids = prev.children.copy()
-                  let last_same =
-                    if kids.length() == 0 {
-                      false
-                    } else {
-                      match kids[kids.length() - 1] {
-                        ListBlock(k, _) => k == kind
-                        _ => false
-                      }
-                    }
-                  if last_same {
-                    let lk = kids.length() - 1
-                    match kids[lk] {
-                      ListBlock(k, its) => {
-                        let a2 = its.copy()
-                        a2.push(it)
-                        kids[lk] = ListBlock(k, a2)
-                      }
-                      _ => ()
-                    }
-                  } else {
-                    kids.push(ListBlock(kind, [it]))
-                  }
-                  let out : Array[Item] = []
-                  for k = 0; k < items.length(); k = k + 1 {
-                    if k == j - 1 {
-                      out.push(Item::{ ..prev, children: kids })
-                    } else if k != j {
-                      out.push(items[k])
-                    }
-                  }
-                  Some(ListBlock(kind, out))
+        let bs = map_top_block(blocks, t, fn(b) {
+          match b {
+            ListBlock(kind, items) =>
+              if j < items.length() {
+                let it = items[j]
+                let prev = items[j - 1]
+                let kids = prev.children.copy()
+                let last_same = if kids.length() == 0 {
+                  false
                 } else {
-                  Some(b)
+                  match kids[kids.length() - 1] {
+                    ListBlock(k, _) => k == kind
+                    _ => false
+                  }
                 }
-              other => Some(other)
-            }
-          },
-        )
+                if last_same {
+                  let lk = kids.length() - 1
+                  match kids[lk] {
+                    ListBlock(k, its) => {
+                      let a2 = its.copy()
+                      a2.push(it)
+                      kids[lk] = ListBlock(k, a2)
+                    }
+                    _ => ()
+                  }
+                } else {
+                  kids.push(ListBlock(kind, [it]))
+                }
+                let out : Array[Item] = []
+                for k = 0; k < items.length(); k = k + 1 {
+                  if k == j - 1 {
+                    out.push(Item::{ ..prev, children: kids })
+                  } else if k != j {
+                    out.push(items[k])
+                  }
+                }
+                Some(ListBlock(kind, out))
+              } else {
+                Some(b)
+              }
+            other => Some(other)
+          }
+        })
         (bs, sel)
       }
   }
@@ -691,10 +698,7 @@ pub fn doc_indent(blocks : Array[Block], sel : Sel) -> (Array[Block], Sel) {
 
 ///|
 /// 反缩进：顶层列表项脱离列表变为同位置段落（children 随之成为后续块）。
-pub fn doc_outdent(
-  blocks : Array[Block],
-  sel : Sel,
-) -> (Array[Block], Sel) {
+pub fn doc_outdent(blocks : Array[Block], sel : Sel) -> (Array[Block], Sel) {
   match locate_top_item(blocks, sel.focus.unit) {
     None => (blocks, sel)
     Some((t, j, _)) =>
@@ -726,7 +730,11 @@ pub fn doc_outdent(
           let bs = doc_ensure_trailing(splice_top(blocks, t, nb))
           let careto = first_top_unit(bs, t) + before.length()
           let clen = char_len(inlines_plain(it.content))
-          let off = if sel.focus.offset > clen { clen } else { sel.focus.offset }
+          let off = if sel.focus.offset > clen {
+            clen
+          } else {
+            sel.focus.offset
+          }
           (bs, collapsed_sel(Caret::{ unit: careto.max(0), offset: off }))
         }
         _ => (blocks, sel)
@@ -735,6 +743,8 @@ pub fn doc_outdent(
 }
 
 // (该顶层块的首单元, 行, 列)
+
+///|
 fn locate_cell(
   blocks : Array[Block],
   us : Array[UnitRef],
@@ -752,7 +762,7 @@ fn locate_cell(
   let mut r = 0
   let mut col = rel
   match blocks[top] {
-    TableBlock(t) => {
+    TableBlock(t) =>
       for k = 0; k < t.rows.length(); k = k + 1 {
         let w = t.rows[k].length()
         if rel < w {
@@ -762,7 +772,6 @@ fn locate_cell(
         }
         rel = rel - w
       }
-    }
     _ => ()
   }
   (first, r, col)
@@ -799,11 +808,9 @@ pub fn doc_table_add_row(
       if out.length() < rows.length() + 1 {
         out.push(new_row)
       }
-      let bs = map_top_block(
-        blocks,
-        top,
-        fn(_) { Some(TableBlock(Table::{ ..t, rows: out })) },
-      )
+      let bs = map_top_block(blocks, top, fn(_) {
+        Some(TableBlock(Table::{ ..t, rows: out }))
+      })
       let mut units = 0
       for k = 0; k <= r && k < t.rows.length(); k = k + 1 {
         units = units + t.rows[k].length()
@@ -841,11 +848,9 @@ pub fn doc_table_delete_row(
           out.push(t.rows[k])
         }
       }
-      let bs = map_top_block(
-        blocks,
-        top,
-        fn(_) { Some(TableBlock(Table::{ ..t, rows: out })) },
-      )
+      let bs = map_top_block(blocks, top, fn(_) {
+        Some(TableBlock(Table::{ ..t, rows: out }))
+      })
       let target_r = if r > 0 { r - 1 } else { 0 }
       let mut units = 0
       for k = 0; k < target_r; k = k + 1 {

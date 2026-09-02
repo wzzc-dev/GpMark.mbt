@@ -7,13 +7,17 @@
 ///|
 pub let store : @gpui.Store = @gpui.Store::new()
 
+///|
 let rev_cell : @gpui.CellId[Int] = store.new_cell(0)
+
+///|
 let rev : @gpui.Signal[Int] = store.signal(rev_cell)
 
 ///|
 /// 编辑器状态（core 的快照式 Editor，写时复制）。
 pub let ed : @core.Editor = @core.Editor::new([@core.Paragraph([])])
 
+///|
 fn bump() -> Unit {
   cache_valid.val = false
   rev.set(store, rev.get(store) + 1)
@@ -24,8 +28,11 @@ fn bump() -> Unit {
 // 行程由窗口两侧 spacer 撑出；GPUI 的 ScrollHandle 保持原生偏移，跨重建
 // 由 set_key("scroll") 保位。对齐 md_editor gpui v1 的做法（v1 用固定行
 // 高，md_mbt 保真渲染改用估算高度前缀和）。
+
+///|
 const WINDOW_PAD : Float = 800.0
 
+///|
 let viewport_h : Ref[Float] = { val: 800.0 }
 
 ///|
@@ -34,16 +41,28 @@ pub fn set_viewport_height(h : Float) -> Unit {
   viewport_h.val = h
 }
 
+///|
 let scroll_y : Ref[Float] = { val: 0.0 }
+
+///|
 let win_lo : Ref[Int] = { val: 0 }
+
+///|
 let win_hi : Ref[Int] = { val: 0 }
 
 // 高度/单元前缀和缓存（长度 n+1）。只在文档版本 bump 后重算；纯滚动重建
 // 直接复用，避免每次滚动都对全文重新 tokenize 估高。
+
+///|
 let cache_valid : Ref[Bool] = { val: false }
+
+///|
 let cache_cum : Ref[Array[Float]] = { val: [] }
+
+///|
 let cache_units : Ref[Array[Int]] = { val: [] }
 
+///|
 fn ensure_height_cache() -> Unit {
   let blocks = ed.blocks
   if cache_valid.val && cache_cum.val.length() == blocks.length() + 1 {
@@ -120,18 +139,23 @@ pub fn dump() -> String {
 // 弹出系统保存框选定目的地，写入成功才建立关联。路径支持 `~` 展开；
 // 读入统一 CRLF→LF。
 
+///|
 let current_file : Ref[String] = { val: "" }
 
 // --- IME 组合中文字（preedit）-----------------------------------------------
 // gpui-sys 的 ImeBridge 在组词更新时经 EVENT_ASYNC 推 0xEE 标记 + UTF-8 组合
 // 文本；提交文本走 EVENT_TEXT 并在 on_text 顶部先清空本状态（提交替代组合）。
 
+///|
 let preedit : Ref[String] = { val: "" }
 
+///|
 fn on_preedit(payload : Bytes) -> Unit {
   if payload.length() > 0 && payload[0] == 0xEE {
     preedit.val = if payload.length() > 1 {
-      @utf8.decode(payload[1:payload.length()]) catch { _ => "" }
+      @utf8.decode(payload[1:payload.length()]) catch {
+        _ => ""
+      }
     } else {
       ""
     }
@@ -139,10 +163,103 @@ fn on_preedit(payload : Bytes) -> Unit {
   }
 }
 
+// --- 鼠标拖拽选区 -----------------------------------------------------------
+// gpui-sys 根节点的鼠标监听把左键按下/拖拽移动/释放转成 EVENT_ASYNC 0xEF
+// 负载（hit.decode_mouse 解析；移动仅在左键按住时发来）。按下在命中点落
+// 光标并锚定选区；拖拽把选区从锚点扩到命中点（几何命中见 hit.mbt：读渲染
+// 层的探针矩形，与点击定位同源）；释放结束拖拽。
+// 桥层在按下-释放后照常合成 token/unit click：拖拽过的用 drag_moved 拦截
+// （不抹掉刚拖出的选区）；没拖拽的按下已按像素比例精确落点，用 mouse_placed
+// 拦截一次（token click 只到 token 起点，不能让粗定位覆盖精确定位）。
+
+///|
+let drag_anchor : Ref[@core.Caret?] = { val: None }
+
+///|
+let drag_moved : Ref[Bool] = { val: false }
+
+///|
+let mouse_placed : Ref[Bool] = { val: false }
+
+///|
+fn hit_caret(x : Int, y : Int) -> @core.Caret? {
+  ensure_height_cache()
+  let us = @core.collect_units(ed.blocks)
+  let cu = cache_units.val
+  let u0 = if win_lo.val >= 0 && win_lo.val < cu.length() {
+    cu[win_lo.val]
+  } else {
+    0
+  }
+  let u1 = if win_hi.val > win_lo.val && win_hi.val < cu.length() {
+    cu[win_hi.val]
+  } else {
+    us.length()
+  }
+  caret_at_point(x, y, u0, u1, us, probe_rect)
+}
+
+///|
+fn caret_eq(a : @core.Caret, b : @core.Caret) -> Bool {
+  // Caret 结构体 == 是引用相等，必须逐字段比。
+  a.unit == b.unit && a.offset == b.offset
+}
+
+///|
+fn on_mouse(phase : Int, x : Int, y : Int) -> Unit {
+  if phase == 0 {
+    drag_moved.val = false
+    let anchor = hit_caret(x, y)
+    drag_anchor.val = anchor
+    mouse_placed.val = anchor.is_some()
+    match anchor {
+      Some(c) => {
+        ed.set_sel(@core.collapsed_sel(c))
+        bump()
+      }
+      None => ()
+    }
+  } else if phase == 1 {
+    match drag_anchor.val {
+      Some(a) =>
+        match hit_caret(x, y) {
+          Some(c) => {
+            if caret_eq(ed.sel.focus, c) && caret_eq(ed.sel.anchor, a) {
+              return ()
+            }
+            ed.set_sel(@core.Sel::{ anchor: a, focus: c })
+            drag_moved.val = true
+            bump()
+          }
+          None => ()
+        }
+      None => ()
+    }
+  } else {
+    drag_anchor.val = None // 释放；drag_moved 保留给紧随其后的合成 click
+  }
+}
+
+///|
+/// EVENT_ASYNC 负载分发：按首字节 tag 路由（0xEE=组词文本，0xEF=鼠标）。
+fn on_async_payload(payload : Bytes) -> Unit {
+  if payload.length() > 0 && payload[0] == 0xEE {
+    on_preedit(payload)
+  } else {
+    match decode_mouse(payload) {
+      Some((phase, x, y)) => on_mouse(phase, x, y)
+      None => ()
+    }
+  }
+}
+
 ///|
 /// 当前文档关联的文件路径（空串 = 未关联，如 demo 文档）。
-pub fn current_path() -> String { current_file.val }
+pub fn current_path() -> String {
+  current_file.val
+}
 
+///|
 fn home_dir() -> String {
   match @env.get_env_var("HOME") {
     Some(h) => h
@@ -150,6 +267,7 @@ fn home_dir() -> String {
   }
 }
 
+///|
 fn expand_tilde(p : String) -> String {
   if p == "~" {
     home_dir()
@@ -160,6 +278,7 @@ fn expand_tilde(p : String) -> String {
   }
 }
 
+///|
 fn normalize_eol(s : String) -> String {
   let cs = s.to_array()
   let out : Array[Char] = []
@@ -178,13 +297,17 @@ fn normalize_eol(s : String) -> String {
   String::from_array(out)
 }
 
+///|
 fn read_text(p : String) -> String? {
   let s = @fs.read_file_to_string(p) catch { _ => return None }
   Some(s)
 }
 
+///|
 fn write_text(p : String, s : String) -> Bool {
-  @fs.write_string_to_file(p, s) catch { _ => return false }
+  @fs.write_string_to_file(p, s) catch {
+    _ => return false
+  }
   true
 }
 
@@ -278,21 +401,26 @@ pub fn display_name() -> String {
   }
 }
 
+///|
 fn on_btn_new() -> Unit {
   // 新建：清空为单空段落（load 复位 undo/关联文件）。
   load("")
 }
 
+///|
 fn on_btn_open() -> Unit {
   open_via_dialog()
 }
 
+///|
 fn on_btn_save() -> Unit {
   save_via_dialog()
 }
 
+///|
 let bar_ids : Array[@gpui.HandlerId] = []
 
+///|
 fn reg_bar(slot : Int) -> Int {
   while bar_ids.length() <= slot {
     let k = bar_ids.length()
@@ -315,7 +443,27 @@ fn reg_bar(slot : Int) -> Int {
 ///|
 /// demo 用的示例文档（标题/列表/任务/引用/代码/表格/图片/HR/行内样式/链接/Raw）。
 pub fn demo_sample() -> String {
-  "# md_mbt 编辑器演示\n" + "\n这是 **GPUI 后端** 的 MoonBit *Markdown* WYSIWYG 核心。\n" + "直接键入编辑，Cmd+Z 撤销，点击任意文字处定位光标。\n" + "\n## 列表与任务\n" + "- 无序项 alpha\n" + "  - 嵌套子项\n" + "1. 有序一\n" + "2. 有序二\n" + "- [x] 已完成任务\n" + "- [ ] 待办任务\n" + "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.dev) 都在同一段里。\n" + "\n```moonbit\nfn greet(name : String) -> String {\n  \"hello \" + name\n}\n```\n" + "\n## 表格\n" + "| 层 | 角色 | 说明 |\n" + "| --- | --- | --- |\n" + "| core | 纯逻辑 | 块树 / 解析 / 编辑 / undo，零 FFI |\n" + "| adapter | 适配 | 块树 → gpui 节点树 + 事件回灌 |\n" + "| main | 装配 | 链接 Rust staticlib，进入事件循环 |\n" + "\n![moon](moon.png)\n" + "\n---\n" + "\n<div class=\"raw-block\">不在稳定子集的语法保留为原样块，导出时零损失。</div>\n"
+  "# md_mbt 编辑器演示\n" +
+  "\n这是 **GPUI 后端** 的 MoonBit *Markdown* WYSIWYG 核心。\n" +
+  "直接键入编辑，Cmd+Z 撤销，点击任意文字处定位光标。\n" +
+  "\n## 列表与任务\n" +
+  "- 无序项 alpha\n" +
+  "  - 嵌套子项\n" +
+  "1. 有序一\n" +
+  "2. 有序二\n" +
+  "- [x] 已完成任务\n" +
+  "- [ ] 待办任务\n" +
+  "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.dev) 都在同一段里。\n" +
+  "\n```moonbit\nfn greet(name : String) -> String {\n  \"hello \" + name\n}\n```\n" +
+  "\n## 表格\n" +
+  "| 层 | 角色 | 说明 |\n" +
+  "| --- | --- | --- |\n" +
+  "| core | 纯逻辑 | 块树 / 解析 / 编辑 / undo，零 FFI |\n" +
+  "| adapter | 适配 | 块树 → gpui 节点树 + 事件回灌 |\n" +
+  "| main | 装配 | 链接 Rust staticlib，进入事件循环 |\n" +
+  "\n![moon](moon.png)\n" +
+  "\n---\n" +
+  "\n<div class=\"raw-block\">不在稳定子集的语法保留为原样块，导出时零损失。</div>\n"
 }
 
 // --- 逐编辑单元点击 ---------------------------------------------------------
@@ -326,19 +474,27 @@ pub fn demo_sample() -> String {
 // (单元, token 下标) 注册一次永久复用：闭包捕获的是下标，点击时读「当前」
 // 渲染留下的布局表，编辑导致的内容位移天然正确。
 // 注意：MoonBit 顶层 let 只在被引用时求值——初始化必须内联在初始化器里。
+
+///|
 let unit_ids : Array[@gpui.HandlerId] = []
+
+///|
 let box_ids : Array[@gpui.HandlerId] = []
+
+///|
 let tok_ids : Array[Array[@gpui.HandlerId]] = []
 
+///|
 let handlers : @gpui.HandlerRegistry = {
   let r = @gpui.HandlerRegistry::new()
   let _ = r.on_key(fn(code, mods) { on_key(code, mods) })
   let _ = r.on_named_key(fn(id, mods) { on_named_key(id, mods) })
   let _ = r.on_text(fn(t) { on_text(t) })
-  let _ = r.on_async(fn(payload) { on_preedit(payload) })
+  let _ = r.on_async(fn(payload) { on_async_payload(payload) })
   r
 }
 
+///|
 fn reg_unit(unit : Int) -> Int {
   while unit_ids.length() <= unit {
     let k = unit_ids.length()
@@ -347,6 +503,7 @@ fn reg_unit(unit : Int) -> Int {
   unit_ids[unit].to_int()
 }
 
+///|
 fn reg_box(unit : Int) -> Int {
   while box_ids.length() <= unit {
     let k = box_ids.length()
@@ -355,6 +512,7 @@ fn reg_box(unit : Int) -> Int {
   box_ids[unit].to_int()
 }
 
+///|
 fn reg_token(unit : Int, ti : Int) -> Int {
   while tok_ids.length() <= unit {
     tok_ids.push([])
@@ -394,7 +552,12 @@ pub fn token_click_id_of(unit : Int, ti : Int) -> Int {
   reg_token(unit, ti)
 }
 
+///|
 fn on_token_click(unit : Int, ti : Int) -> Unit {
+  if drag_moved.val || mouse_placed.val {
+    mouse_placed.val = false // 一次性消费
+    return
+  } // 拖拽后桥层合成的 click：不覆盖刚拖出的选区
   let us = @core.collect_units(ed.blocks)
   if unit < 0 || unit >= us.length() {
     return
@@ -405,12 +568,21 @@ fn on_token_click(unit : Int, ti : Int) -> Unit {
     return
   }
   // 编辑后 token 变少：下标越界钳到单元末尾
-  let off = if ti < starts.length() { starts[ti] } else { starts[starts.length() - 1] }
+  let off = if ti < starts.length() {
+    starts[ti]
+  } else {
+    starts[starts.length() - 1]
+  }
   ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit, offset: off }))
   bump()
 }
 
+///|
 fn on_unit_click(unit : Int) -> Unit {
+  if drag_moved.val || mouse_placed.val {
+    mouse_placed.val = false
+    return
+  }
   let us = @core.collect_units(ed.blocks)
   if unit < 0 || unit >= us.length() {
     return
@@ -420,13 +592,20 @@ fn on_unit_click(unit : Int) -> Unit {
   bump()
 }
 
+///|
 fn on_box_click(unit : Int) -> Unit {
+  if drag_moved.val {
+    return
+  }
   let us = @core.collect_units(ed.blocks)
   if unit < 0 || unit >= us.length() {
     return
   }
   ed.apply(fn(b, _s) {
-    @core.doc_toggle_task(b, @core.collapsed_sel(@core.Caret::{ unit, offset: 0 }))
+    @core.doc_toggle_task(
+      b,
+      @core.collapsed_sel(@core.Caret::{ unit, offset: 0 }),
+    )
   })
   bump()
 }
@@ -439,9 +618,14 @@ fn on_box_click(unit : Int) -> Unit {
 // key_seq；带修饰键的 keydown 记下 swallow_seq；on_text 只有当 swallow_seq
 // 仍等于当前代际时才吞——任何后续按键都会使过期的吞标志失效，避免一次性
 // 布尔标志误吞普通键入。
+
+///|
 let key_gen : Array[Int] = [0]
+
+///|
 let swallow_gen : Array[Int] = [-1]
 
+///|
 fn bump_key_gen(mods : Int) -> Unit {
   key_gen[0] = key_gen[0] + 1
   if (mods & (@gpui.MOD_PLATFORM | @gpui.MOD_CTRL | @gpui.MOD_ALT)) != 0 {
@@ -451,6 +635,7 @@ fn bump_key_gen(mods : Int) -> Unit {
   }
 }
 
+///|
 fn on_text(t : String) -> Unit {
   // 提交文本替代组合中的 preedit（IME commit 先于本处理清空组词预览）
   preedit.val = ""
@@ -473,11 +658,14 @@ fn on_text(t : String) -> Unit {
       return (b3, s3)
     }
     let u = us[c.unit]
-    let ed_ =
-      match u.kind {
-        @core.ParagraphU | @core.HeadingU(_) | @core.ListItemU | @core.CellU | @core.QuoteU => true
-        _ => false
-      }
+    let ed_ = match u.kind {
+      @core.ParagraphU
+      | @core.HeadingU(_)
+      | @core.ListItemU
+      | @core.CellU
+      | @core.QuoteU => true
+      _ => false
+    }
     if !ed_ {
       return (b3, s3)
     }
@@ -493,32 +681,48 @@ fn on_text(t : String) -> Unit {
   bump()
 }
 
+///|
 let langs : Array[String] = [
   "", "moonbit", "rust", "python", "javascript", "json", "bash", "text",
 ]
 
+///|
 fn code_hit(code : Int, c : Char) -> Bool {
   code == c.to_int()
 }
 
+///|
 fn set_mark(self_bold : Bool, it_italic : Bool, st : Bool, cd : Bool) -> Unit {
   ed.apply(fn(b, s) {
-    @core.doc_toggle_mark(
-      b,
-      s,
-      fn(m) {
-        @core.Marks::{
-          bold: if self_bold { !m.bold } else { m.bold },
-          italic: if it_italic { !m.italic } else { m.italic },
-          strike: if st { !m.strike } else { m.strike },
-          code: if cd { !m.code } else { m.code },
-        }
-      },
-    )
+    @core.doc_toggle_mark(b, s, fn(m) {
+      @core.Marks::{
+        bold: if self_bold {
+          !m.bold
+        } else {
+          m.bold
+        },
+        italic: if it_italic {
+          !m.italic
+        } else {
+          m.italic
+        },
+        strike: if st {
+          !m.strike
+        } else {
+          m.strike
+        },
+        code: if cd {
+          !m.code
+        } else {
+          m.code
+        },
+      }
+    })
   })
   bump()
 }
 
+///|
 fn on_key(code : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
   if (mods & @gpui.MOD_PLATFORM) != 0 {
@@ -570,7 +774,8 @@ fn on_key(code : Int, mods : Int) -> Unit {
       set_mark(false, true, false, false)
     } else if code_hit(code, 'e') || code_hit(code, 'E') {
       set_mark(false, false, false, true)
-    } else if (mods & @gpui.MOD_SHIFT) != 0 && (code_hit(code, 'x') || code_hit(code, 'X')) {
+    } else if (mods & @gpui.MOD_SHIFT) != 0 &&
+      (code_hit(code, 'x') || code_hit(code, 'X')) {
       set_mark(false, false, true, false)
     } else if code_hit(code, '[') {
       ed.apply(fn(b, s) { @core.doc_outdent(b, s) })
@@ -578,13 +783,15 @@ fn on_key(code : Int, mods : Int) -> Unit {
     } else if code_hit(code, ']') {
       ed.apply(fn(b, s) { @core.doc_indent(b, s) })
       bump()
-    } else if (mods & @gpui.MOD_SHIFT) != 0 && (code_hit(code, 'l') || code_hit(code, 'L')) {
+    } else if (mods & @gpui.MOD_SHIFT) != 0 &&
+      (code_hit(code, 'l') || code_hit(code, 'L')) {
       ed.apply(fn(b, s) { @core.doc_cycle_code_lang(b, s, langs) })
       bump()
     }
   }
 }
 
+///|
 fn on_named_key(id : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
   let ext = (mods & @gpui.MOD_SHIFT) != 0
@@ -621,22 +828,21 @@ fn on_named_key(id : Int, mods : Int) -> Unit {
     ed.set_sel(@core.doc_move_word(ed.blocks, ed.sel, d, ext))
     bump()
   } else {
-    let dir =
-      if id == @gpui.KEY_LEFT {
-        Some(@core.Left)
-      } else if id == @gpui.KEY_RIGHT {
-        Some(@core.Right)
-      } else if id == @gpui.KEY_UP {
-        Some(@core.Up)
-      } else if id == @gpui.KEY_DOWN {
-        Some(@core.Down)
-      } else if id == @gpui.KEY_HOME {
-        Some(@core.Home)
-      } else if id == @gpui.KEY_END {
-        Some(@core.End)
-      } else {
-        None
-      }
+    let dir = if id == @gpui.KEY_LEFT {
+      Some(@core.Left)
+    } else if id == @gpui.KEY_RIGHT {
+      Some(@core.Right)
+    } else if id == @gpui.KEY_UP {
+      Some(@core.Up)
+    } else if id == @gpui.KEY_DOWN {
+      Some(@core.Down)
+    } else if id == @gpui.KEY_HOME {
+      Some(@core.Home)
+    } else if id == @gpui.KEY_END {
+      Some(@core.End)
+    } else {
+      None
+    }
     match dir {
       Some(d) => {
         ed.set_sel(@core.doc_move(ed.blocks, ed.sel, d, ext))
@@ -649,6 +855,7 @@ fn on_named_key(id : Int, mods : Int) -> Unit {
 
 // --- 渲染入口 ---------------------------------------------------------------
 
+///|
 let ctx : @gpui.RenderCtx = { view: 0, store, handlers }
 
 ///|
@@ -690,6 +897,11 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
   cb.set_key("root")
   cb.set_bg(28, 30, 38)
   cb.set_flex_col()
+  cb.div() // 探针表帧初清空标记（零尺寸不可见；须是 root 首个子节点）
+  cb.set_key("probe:clear")
+  cb.set_position(@gpui.POSITION_ABSOLUTE)
+  cb.set_min_size(0, 0)
+  cb.add_child()
   render_top_bar(cb, display_name(), reg_bar)
   cb.div() // 滚动容器：内容超高时鼠标滚轮可滚（框架提供原生滚动）
   cb.set_key("scroll")
@@ -737,14 +949,14 @@ pub fn build_tree(view : Int) -> Result[Unit, Int] {
 
 ///|
 /// 事件入口：main 用 register_dispatch 注册后由 Rust 调用。
-pub fn dispatch(version : Int, kind : Int, view : Int, data_a : Int, data_b : Int) -> Int {
-  @gpui.framework_dispatch(
-    ctx,
-    version,
-    kind,
-    view,
-    data_a,
-    data_b,
-    fn(v) { rebuild(v) },
-  )
+pub fn dispatch(
+  version : Int,
+  kind : Int,
+  view : Int,
+  data_a : Int,
+  data_b : Int,
+) -> Int {
+  @gpui.framework_dispatch(ctx, version, kind, view, data_a, data_b, fn(v) {
+    rebuild(v)
+  })
 }

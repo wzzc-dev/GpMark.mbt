@@ -1,14 +1,15 @@
+///|
 /// 活行内转换（velotype 的 inline marker 引擎语义）：
 /// 键入的字面 `**x**` / `` `x` `` / `~~x~~` / `[t](u)` 在触发字符落定后
 /// 原地变成样式 run。原理：把当前 run 数组序列化回源码（inline_src），
 /// 再 parse_inline 回来——依赖 parse→serialize→parse 的幂等性，
 /// Cmd+B 等 toggle 出的样式在往返中不丢失；字面标记文本则被解析成样式。
 /// 光标偏移通过「plain → 源码」映射表重映射。
-
 fn clen(s : String) -> Int {
   s.to_array().length()
 }
 
+///|
 fn run_open(m : Marks) -> Int {
   let mut n = 0
   if m.code {

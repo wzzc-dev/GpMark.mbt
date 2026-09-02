@@ -3,6 +3,7 @@
 /// 的链接参数，且除了 main 不含任何逻辑（link 参数会传染到测试可执行文件）。
 
 ///|
+
 ///|
 fn now_ms() -> Double {
   @env.now().reinterpret_as_int64().to_double()

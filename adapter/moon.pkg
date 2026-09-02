@@ -1,5 +1,5 @@
 import {
-  "mdmbt/core" @core,
+  "mdmbt/core",
   "nakake/gpui-bindings" @gpui,
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
@@ -10,6 +10,7 @@ import {
 // filedialog_stub.c 用 popen(osascript choose file) 弹系统文件选择框。
 // 均零框架链接依赖（不能在库包加 cc-link-flags：会令 moon 误把本包
 // 当可执行目标构建）。
+
 options(
   "native-stub": [ "clipboard_stub.c", "filedialog_stub.c" ],
 )

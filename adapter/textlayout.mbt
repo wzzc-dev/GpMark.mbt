@@ -9,20 +9,22 @@
 ///|
 pub type Tok = (Int, Int) // (字符起点, 长度)
 
+///|
 /// CJK/全角/宽emoji——断行与宽度估算都用它判定。
 pub fn is_wide(c : Char) -> Bool {
   let u = c.to_int()
   (u >= 0x1100 && u <= 0x115F) ||
-    (u >= 0x2E80 && u <= 0xA4CF) ||
-    (u >= 0xAC00 && u <= 0xD7A3) ||
-    (u >= 0xF900 && u <= 0xFAFF) ||
-    (u >= 0xFE30 && u <= 0xFE4F) ||
-    (u >= 0xFF00 && u <= 0xFF60) ||
-    (u >= 0xFFE0 && u <= 0xFFE6) ||
-    (u >= 0x1F300 && u <= 0x1FAFF) ||
-    (u >= 0x20000 && u <= 0x3FFFD)
+  (u >= 0x2E80 && u <= 0xA4CF) ||
+  (u >= 0xAC00 && u <= 0xD7A3) ||
+  (u >= 0xF900 && u <= 0xFAFF) ||
+  (u >= 0xFE30 && u <= 0xFE4F) ||
+  (u >= 0xFF00 && u <= 0xFF60) ||
+  (u >= 0xFFE0 && u <= 0xFFE6) ||
+  (u >= 0x1F300 && u <= 0x1FAFF) ||
+  (u >= 0x20000 && u <= 0x3FFFD)
 }
 
+///|
 /// 单字符宽度（em 倍数）。刻意取略宽估计：宁可提前折行，不可折不下溢出。
 pub fn char_w(c : Char) -> Float {
   if is_wide(c) {
@@ -38,6 +40,7 @@ pub fn char_w(c : Char) -> Float {
   }
 }
 
+///|
 pub fn tok_px(cs : Array[Char], s : Int, len : Int, size : Float) -> Float {
   let mut w : Float = 0.0
   let mut j = 0
@@ -141,6 +144,7 @@ pub fn layout_text(cs : Array[Char], size : Float, avail : Float) -> Layout {
   { toks, widths, rows }
 }
 
+///|
 /// 单元格/列宽估算：内容显示宽度（px）+ 水平内边距。
 pub fn cell_px(cs : Array[Char], size : Float, bold : Bool) -> Float {
   let mut u : Float = 0.0

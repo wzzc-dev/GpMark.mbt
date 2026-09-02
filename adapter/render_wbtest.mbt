@@ -1,5 +1,5 @@
+///|
 /// 渲染层纯逻辑测试（不触 FFI）。
-
 fn run_render(src : String) -> Unit {
   let bs = @core.parse_doc(src)
   let cb = @gpui.CommandBuffer::new()
@@ -16,6 +16,7 @@ fn run_render(src : String) -> Unit {
   cb.set_root()
 }
 
+///|
 test "渲染命令缓冲含合法 GPUI 头" {
   let bs = @core.parse_doc("# H\n\ntext\n")
   let cb = @gpui.CommandBuffer::new()
@@ -36,15 +37,15 @@ test "渲染命令缓冲含合法 GPUI 头" {
   assert_true(bytes[3] == b'I')
 }
 
+///|
 test "渲染全元素文档不崩溃" {
-  let doc =
-    "# T\n\n- a\n  - b\n1. x\n- [ ] t\n\n> q\n\n```py\nx=1\n```\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n![i](u.png)\n\n---\n\n<span>raw</span>\n"
+  let doc = "# T\n\n- a\n  - b\n1. x\n- [ ] t\n\n> q\n\n```py\nx=1\n```\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n![i](u.png)\n\n---\n\n<span>raw</span>\n"
   run_render(doc)
 }
 
+///|
 test "count_units_of 与 collect_units 一致" {
-  let doc =
-    "# T\n\n- a\n  - b\n\n> q\n\n| a | b |\n| --- | --- |\n\nx\n"
+  let doc = "# T\n\n- a\n  - b\n\n> q\n\n| a | b |\n| --- | --- |\n\nx\n"
   let bs = @core.parse_doc(doc)
   let mut total = 0
   for b in bs {
@@ -53,6 +54,7 @@ test "count_units_of 与 collect_units 一致" {
   assert_eq(total, @core.collect_units(bs).length())
 }
 
+///|
 test "行内段含样式与光标" {
   let ns = @core.parse_inline("a**b**")
   let segs = inline_segments(ns, 1, -1, -1)
@@ -74,6 +76,7 @@ test "行内段含样式与光标" {
   assert_true(found_bold)
 }
 
+///|
 test "选区段带背景高亮" {
   let ns = @core.parse_inline("hello")
   let segs = inline_segments(ns, -1, 1, 3)
@@ -90,6 +93,7 @@ test "选区段带背景高亮" {
   assert_eq(bg, 2)
 }
 
+///|
 test "token 布局表：CJK 逐字 + 行尾虚拟 token" {
   // 「甲乙」：CJK 一字一 token，起点 0,1 + 末尾 2（行尾空白区）
   let bs = @core.parse_doc("甲乙\n")
@@ -106,6 +110,7 @@ test "token 布局表：CJK 逐字 + 行尾虚拟 token" {
   assert_eq(tok_starts_of(0), [0, 1, 2])
 }
 
+///|
 test "token 布局表：光标所在 token 分裂为两段" {
   // "hello world" 默认 tokens [0,6),[6,5)；光标在 3 → 首 token 分裂，
   // 子 token 起点表 [0,3,6,11]，右半段左缘 = 零宽光标位置
@@ -123,6 +128,7 @@ test "token 布局表：光标所在 token 分裂为两段" {
   assert_eq(tok_starts_of(0), [0, 3, 6, 11])
 }
 
+///|
 test "token 布局表：拉丁词聚合" {
   let bs = @core.parse_doc("hello world\n")
   let cb = @gpui.CommandBuffer::new()
@@ -138,6 +144,7 @@ test "token 布局表：拉丁词聚合" {
   assert_eq(tok_starts_of(0), [0, 6, 11])
 }
 
+///|
 test "token 布局表：空单元也有点击区" {
   // doc_ensure 会在文末补空段落作为最后一个单元
   let bs = @core.doc_ensure(@core.parse_doc(""))
@@ -180,14 +187,7 @@ test "组词预览：set_preedit 后光标处命令缓冲浮动渲染组词文�
   set_preedit("nihao")
   let cb = @gpui.CommandBuffer::new()
   cb.div()
-  render_doc(
-    cb,
-    bs,
-    sel,
-    fn(_) { 1 },
-    fn(_) { 2 },
-    fn(_, _) { 3 },
-  )
+  render_doc(cb, bs, sel, fn(_) { 1 }, fn(_) { 2 }, fn(_, _) { 3 })
   assert_true(cb_contains(cb.to_bytes(), "nihao"))
   // 覆盖层必须带 caret key：桥层 CaretBoundsProbe 据此捕获候选窗锚点矩形
   assert_true(cb_contains(cb.to_bytes(), "caret"))
@@ -195,14 +195,7 @@ test "组词预览：set_preedit 后光标处命令缓冲浮动渲染组词文�
   set_preedit("")
   let cb2 = @gpui.CommandBuffer::new()
   cb2.div()
-  render_doc(
-    cb2,
-    bs,
-    sel,
-    fn(_) { 1 },
-    fn(_) { 2 },
-    fn(_, _) { 3 },
-  )
+  render_doc(cb2, bs, sel, fn(_) { 1 }, fn(_) { 2 }, fn(_, _) { 3 })
   assert_true(!cb_contains(cb2.to_bytes(), "nihao"))
   assert_true(cb_contains(cb2.to_bytes(), "caret"))
 }

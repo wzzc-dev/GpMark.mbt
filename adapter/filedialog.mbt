@@ -11,10 +11,7 @@ extern "c" fn gpui_pick_file_ffi(buf : Bytes, cap : Int) -> Int = "gpui_pick_fil
 
 ///|
 #borrow(buf)
-extern "c" fn gpui_pick_save_file_ffi(
-  buf : Bytes,
-  cap : Int,
-) -> Int = "gpui_pick_save_file"
+extern "c" fn gpui_pick_save_file_ffi(buf : Bytes, cap : Int) -> Int = "gpui_pick_save_file"
 
 ///|
 /// 弹出系统打开文件框。选中返回 POSIX 路径；取消/失败返回 None。

@@ -5,20 +5,14 @@
 
 ///|
 #borrow(ptr)
-extern "c" fn gpui_clipboard_write_text_ffi(
-  ptr : Bytes,
-  len : Int,
-) -> Int = "gpui_clipboard_write_text"
+extern "c" fn gpui_clipboard_write_text_ffi(ptr : Bytes, len : Int) -> Int = "gpui_clipboard_write_text"
 
 ///|
 extern "c" fn gpui_clipboard_read_len_ffi() -> Int = "gpui_clipboard_read_len"
 
 ///|
 #borrow(buf)
-extern "c" fn gpui_clipboard_read_copy_ffi(
-  buf : Bytes,
-  cap : Int,
-) -> Int = "gpui_clipboard_read_copy"
+extern "c" fn gpui_clipboard_read_copy_ffi(buf : Bytes, cap : Int) -> Int = "gpui_clipboard_read_copy"
 
 ///|
 /// 把文本写入系统剪贴板（同步生效）。
@@ -39,5 +33,7 @@ pub fn clipboard_read() -> String {
   if n <= 0 {
     return ""
   }
-  @utf8.decode(buf[0:n]) catch { _ => "" }
+  @utf8.decode(buf[0:n]) catch {
+    _ => ""
+  }
 }

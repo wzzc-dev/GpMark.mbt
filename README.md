@@ -41,6 +41,9 @@ adapter/   独立模块 mdmbt/adapter：GPUI 适配层（import core + gpui-bind
                纯字节构造，无 FFI，可被 moon test 直接验证
   textlayout.mbt 点击定位布局器：token 分词 + 按字符类别的宽度估算 + 贪心折行
                （框架无坐标/度量，「点哪停哪」在 MoonBit 侧自算）
+  hit.mbt      鼠标坐标命中测试：渲染层为每个 token/行尾区挂探针 key，gpui-sys
+               paint 时记录真实布局矩形，经 gpui_probe_rect 拉回按行/列映射为
+               插入点——拖拽选区与按下落点都走这里（词内像素级精确）
   clipboard.mbt / clipboard_stub.c
                系统剪贴板同步读写（native-stub 经 pbcopy/pbpaste，
                Cmd+C/X/V；与 moonbitlang/x/fs 的 stub 同一形态）
@@ -72,7 +75,7 @@ gpui-moonbit 以 vendored 路径依赖引入（third_party/，git submodule）�
 Xcode CLT。gpui-moonbit 已 vendored 在 `third_party/`。
 
 ```sh
-moon test                     # core + adapter 单元测试（62 个，无 GUI）
+moon test                     # core + adapter 单元测试（68 个，无 GUI）
 moon build --target native    # 首次会由 link 包 prebuild 触发 cargo 构建 libgpui_sys.a
 
 ./build.sh                    # 确保 staticlib + 构建所有 native 目标
@@ -129,7 +132,8 @@ input mode）判定，第三方输入法（搜狗、微信等）与系统拼音�
 | 操作 | 行为 |
 | --- | --- |
 | 直接键入 | 当前光标处插入，继承左侧 run 样式；连续键入合并为一次撤销 |
-| 点击文本任意处 | 光标落在点击处附近：CJK 精确到字、拉丁精确到词、行尾空白=块尾（框架无坐标，token 级近似，见 framework-gaps） |
+| 点击文本任意处 | 光标落在点击处：经探针几何按像素比例插值，词内可精确到字（见 framework-gaps §14）；点击段落间大空白不动光标 |
+| 鼠标左键拖拽 | 选区从按下点扩到当前位置（像素级命中；跨块、跨表格连续） |
 | 点击 ☑/☐ 任务框 | 勾选切换 |
 | Enter / Backspace / Delete | Enter 先走规则再拆分；格首退格/格尾前删只移光标（防幽灵格） |
 | Alt+Enter | 表格：当前行下方加一行 |
@@ -152,8 +156,9 @@ input mode）判定，第三方输入法（搜狗、微信等）与系统拼音�
 
 完整列表见 [docs/framework-gaps.md](docs/framework-gaps.md)，摘要：
 
-- 点击不带坐标 → 渲染层自行分词折行，点击定位到 token 起点（CJK 一字、
-  拉丁一词）；是「点哪停哪」的近似，词中/字中无法再细分。
+- 点击文本/拖拽选区的坐标经「渲染层探针 key → gpui-sys 回传布局矩形」获得
+  （framework-gaps §14），像素级精确；但只覆盖 token 渲染的单元——代码块、
+  表格线框等非 token 区域仍按单元落点（点代码块落块尾）。
 - 折行按固定 960px 估算宽度手动进行 → 窗口缩放不会重新折行。
 - Tab 被框架焦点遍历吃掉 → 缩进/反缩进用 Cmd+] / Cmd+[。
 - 无文本度量接口 → ↑↓ 是"相邻编辑单元"近似，不跟视觉软换行走；折行宽度
@@ -162,7 +167,7 @@ input mode）判定，第三方输入法（搜狗、微信等）与系统拼音�
   光标仍是“▏”字符段（会占一格宽）；IME 组词文本浮动渲染在光标处而非
   真实 inline 重排（候选窗经 key="caret" 几何回传已跟随光标，见
   docs/framework-gaps.md §13）。
-- 鼠标拖拽选区、右键菜单：框架单事件入口无对应事件，未实现。
+- 右键菜单未实现（桥层鼠标回传只订了左键按下/拖拽移动/释放三类事件）。
 - 文件拖拽进窗口不支持 → 打开/保存走系统文件选择框（native-stub 经
   osascript choose file 弹出 NSOpenPanel/NSSavePanel，framework-gaps §11），
   或按文件启动；剪贴板经 native-stub 直接读写系统剪贴板（framework-gaps §13b）。

@@ -278,10 +278,7 @@ fn marks_of(n : Inline) -> Marks {
 test "BlockOp：列表转段落保住全部项；类型互转" {
   let doc = parse_doc("- 甲\n- 乙\n- 丙\n")
   let (b1, _) = doc_block_op(doc, csel(1, 0), ToggleBullet)
-  assert_eq(
-    b1.map(block_plain),
-    ["甲", "乙", "丙"],
-  )
+  assert_eq(b1.map(block_plain), ["甲", "乙", "丙"])
   let (b2, _) = doc_block_op(b1, csel(0, 0), ToggleBullet)
   match b2[0] {
     ListBlock(Bullet, its) => assert_eq(its.length(), 1) // 只包光标所在段
@@ -386,4 +383,100 @@ fn mk_sel(au : Int, ao : Int, bu : Int, bo : Int) -> Sel {
     anchor: Caret::{ unit: au, offset: ao },
     focus: Caret::{ unit: bu, offset: bo },
   }
+}
+
+///|
+fn has_table_doc(bs : Array[Block]) -> Bool {
+  let mut found = false
+  for b in bs {
+    match b {
+      TableBlock(_) => found = true
+      _ => ()
+    }
+  }
+  found
+}
+
+///|
+test "全选删除：表格整体移除（全选删除遗留空表回归）" {
+  let bs = parse_doc(
+    "首段\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n尾段\n",
+  )
+  assert_true(has_table_doc(bs))
+  // 单元布局：0=首段，1..4=四格，5=尾段
+  // 1) 全选删除：什么都不剩，只留 doc_ensure 的空段
+  let (del, caret) = doc_delete(bs, doc_select_all(bs))
+  assert_true(!has_table_doc(del))
+  assert_eq(plain_doc(del), [""])
+  assert_eq(caret, Caret::{ unit: 0, offset: 0 })
+  // 2) 选区恰好从表格首格格头起、罩到最后一格末尾：整表删除
+  //    （批量循环停在起点 a，起点块的删除依赖 doc_delete 的收尾补删）
+  let (del2, _) = doc_delete(bs, mk_sel(1, 0, 4, 1))
+  assert_true(!has_table_doc(del2))
+  assert_eq(plain_doc(del2), ["首段", "尾段"])
+  // 3) 选区从表格中部开始（未罩住格头）：只清内容，表格保留
+  let (del3, _) = doc_delete(bs, mk_sel(3, 1, 4, 1))
+  assert_true(has_table_doc(del3))
+  // 4) 交互式退格（无选区）在首格格头：不得触发整表删除
+  let (del4, _) = doc_backspace(
+    bs,
+    collapsed_sel(Caret::{ unit: 1, offset: 0 }),
+  )
+  assert_true(has_table_doc(del4))
+}
+
+///|
+test "全选删除：空壳块全部清除（引文/列表/HR 空壳回归）" {
+  let doc = parse_doc("首段\n\n---\n\n> 引用\n\n- 列表\n\n尾段\n")
+  let sel = doc_select_all(doc)
+  let (r, c) = doc_delete(doc, sel)
+  assert_eq(serialize_doc(r), "")
+  assert_eq(r.length(), 1)
+  assert_eq(c.unit, 0)
+  assert_eq(c.offset, 0)
+  // 未罩住的块不得被扫尾误删：选区止于表格中部，表保留。
+  let doc2 = parse_doc("首段\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n")
+  let (r2, _) = doc_delete(doc2, mk_sel(0, 1, 3, 1))
+  let kinds = r2.map(b => {
+    match b {
+      Paragraph(_) => "P"
+      TableBlock(_) => "T"
+      _ => "?"
+    }
+  })
+  assert_eq(kinds, ["P", "T"])
+}
+
+///|
+///|
+test "全选删除：demo 文档清空（巨型光标/软换行残留回归）" {
+  let demo =
+    "# md_mbt 编辑器演示\n" +
+    "\n这是 **GPUI 后端** 的 MoonBit *Markdown* WYSIWYG 核心。\n" +
+    "直接键入编辑，Cmd+Z 撤销，点击任意文字处定位光标。\n" +
+    "\n## 列表与任务\n" +
+    "- 无序项 alpha\n" +
+    "  - 嵌套子项\n" +
+    "1. 有序一\n" +
+    "2. 有序二\n" +
+    "- [x] 已完成任务\n" +
+    "- [ ] 待办任务\n" +
+    "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.dev) 都在同一段里。\n" +
+    "\n```moonbit\nfn greet(name : String) -> String {\n  \"hello \" + name\n}\n```\n" +
+    "\n## 表格\n" +
+    "| 层 | 角色 | 说明 |\n" +
+    "| --- | --- | --- |\n" +
+    "| core | 纯逻辑 | 块树 / 解析 / 编辑 / undo，零 FFI |\n" +
+    "| adapter | 适配 | 块树 → gpui 节点树 + 事件回灌 |\n" +
+    "| main | 装配 | 链接 Rust staticlib，进入事件循环 |\n" +
+    "\n![moon](moon.png)\n" +
+    "\n---\n" +
+    "\n<div class=\"raw-block\">不在稳定子集的语法保留为原样块，导出时零损失。</div>\n"
+  let bs = parse_doc(demo)
+  let (del, caret) = doc_delete(bs, doc_select_all(bs))
+  // 循环在代码块合并接缝注入软换行、回退光标再也删不到 →
+  // 曾遗留纯 "\n" 标题壳（非空渲染路径 → 尾区光标条拉满整行）。
+  assert_eq(serialize_doc(del), "")
+  assert_eq(del.length(), 1)
+  assert_eq(caret, Caret::{ unit: 0, offset: 0 })
 }

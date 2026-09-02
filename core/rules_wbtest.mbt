@@ -13,12 +13,12 @@ fn pl(bs : Array[Block]) -> Array[String] {
 ///|
 fn kind_of(bs : Array[Block], i : Int) -> String {
   match bs[i] {
-    Heading(l, _) => "h" + (l.to_string())
+    Heading(l, _) => "h" + l.to_string()
     Paragraph(_) => "p"
     CodeBlock(lang, _) => "code:" + lang
     Quote(_) => "quote"
     ListBlock(Bullet, _) => "bullet"
-    ListBlock(Ordered(n), _) => "ordered" + (n.to_string())
+    ListBlock(Ordered(n), _) => "ordered" + n.to_string()
     ListBlock(Task, _) => "task"
     TableBlock(_) => "table"
     ImageBlock(_, _) => "img"
@@ -128,10 +128,17 @@ test "空格规则：标题改级别；样式前缀不触发" {
   let (_, _, ok2b) = doc_apply_space_rule(same, csel(0, 4))
   assert_true(!ok2b)
   // 样式化前缀（加粗的 "- "）不触发
-  let styled = [Paragraph([
-    Run("- ", Marks::{ bold: true, italic: false, strike: false, code: false }),
-    Run("甲", Marks::{ bold: false, italic: false, strike: false, code: false }),
-  ])]
+  let styled = [
+    Paragraph([
+      Run("- ", Marks::{ bold: true, italic: false, strike: false, code: false }),
+      Run("甲", Marks::{
+        bold: false,
+        italic: false,
+        strike: false,
+        code: false,
+      }),
+    ]),
+  ]
   let (_, _, ok3) = doc_apply_space_rule(styled, csel(0, 2))
   assert_true(!ok3)
 }
@@ -174,9 +181,7 @@ test "Enter 规则：围栏建代码块（含末块陷阱修复）/ --- 转分�
 ///|
 test "Enter 规则：空列表项退出列表（单项/多项/嵌套守卫）" {
   // 单项 → 列表整体变段落
-  let one = [ListBlock(Bullet, [
-    { checked: None, content: [], children: [] },
-  ])]
+  let one = [ListBlock(Bullet, [{ checked: None, content: [], children: [] }])]
   match doc_apply_enter_rules(one, csel(0, 0)) {
     Some((b, s)) => {
       assert_eq(kind_of(b, 0), "p")
@@ -186,32 +191,35 @@ test "Enter 规则：空列表项退出列表（单项/多项/嵌套守卫）" {
     None => fail("单项空列表应退出")
   }
   // 多项：空项退出为段落，前后列表拆分
-  let many = [ListBlock(Bullet, [
-    { checked: None, content: [Run("甲", Marks::default())], children: [] },
-    { checked: None, content: [], children: [] },
-    { checked: None, content: [Run("丙", Marks::default())], children: [] },
-  ])]
+  let many = [
+    ListBlock(Bullet, [
+      { checked: None, content: [Run("甲", Marks::default())], children: [] },
+      { checked: None, content: [], children: [] },
+      { checked: None, content: [Run("丙", Marks::default())], children: [] },
+    ]),
+  ]
   // 单元：0=甲 1=空 2=丙
   match doc_apply_enter_rules(many, csel(1, 0)) {
     Some((b, s)) => {
-      assert_eq(
-        [kind_of(b, 0), kind_of(b, 1), kind_of(b, 2)],
-        ["bullet", "p", "bullet"],
-      )
+      assert_eq([kind_of(b, 0), kind_of(b, 1), kind_of(b, 2)], [
+        "bullet", "p", "bullet",
+      ])
       assert_eq(s, csel(1, 0))
     }
     None => fail("多项空项应退出")
   }
   // 嵌套子项不触发（落回普通 Enter 拆分）
-  let nested = [ListBlock(Bullet, [
-    {
-      checked: None,
-      content: [Run("父", Marks::default())],
-      children: [ListBlock(Bullet, [
-        { checked: None, content: [], children: [] },
-      ])],
-    },
-  ])]
+  let nested = [
+    ListBlock(Bullet, [
+      {
+        checked: None,
+        content: [Run("父", Marks::default())],
+        children: [
+          ListBlock(Bullet, [{ checked: None, content: [], children: [] }]),
+        ],
+      },
+    ]),
+  ]
   // 单元：0=父 1=子
   assert_true(doc_apply_enter_rules(nested, csel(1, 0)).is_none())
 }
@@ -270,13 +278,10 @@ test "词移动：英文词 / 中文逐字 / 跨单元" {
     anchor: Caret::{ unit: 0, offset: 0 },
     focus: Caret::{ unit: 0, offset: 0 },
   }
-  assert_eq(
-    doc_move_word(bs, sel, Right, true),
-    Sel::{
-      anchor: Caret::{ unit: 0, offset: 0 },
-      focus: Caret::{ unit: 0, offset: 5 },
-    },
-  )
+  assert_eq(doc_move_word(bs, sel, Right, true), Sel::{
+    anchor: Caret::{ unit: 0, offset: 0 },
+    focus: Caret::{ unit: 0, offset: 5 },
+  })
   // 中文逐字
   let cn = parse_doc("你好吗\n")
   assert_eq(doc_move_word(cn, csel(0, 3), Left, false), csel(0, 2))
@@ -320,7 +325,8 @@ test "缩进 / 反缩进（单元下标不变量）" {
     ListBlock(Bullet, its) => {
       assert_eq(its.length(), 1)
       match its[0].children[0] {
-        ListBlock(Bullet, sub) => assert_eq(inlines_plain(sub[0].content), "乙")
+        ListBlock(Bullet, sub) =>
+          assert_eq(inlines_plain(sub[0].content), "乙")
         _ => fail("嵌套 bullet")
       }
     }
@@ -355,25 +361,25 @@ test "表格加行 / 删行" {
   }
   assert_eq(s2.focus.unit, 2) // 回到上一行同列格
   // 删到只剩一行 → 退化段落
-  let one = [TableBlock(Table::{
-    rows: [[
-      [Run("x", Marks::default())],
-    ]],
-    has_header: false,
-  })]
+  let one = [
+    TableBlock(Table::{
+      rows: [[[Run("x", Marks::default())]]],
+      has_header: false,
+    }),
+  ]
   let (b3, _) = doc_table_delete_row(one, csel(0, 0))
   assert_eq(kind_of(b3, 0), "p")
 }
 
 ///|
 test "活行内转换：字面标记原地变样式 + 光标重映射" {
-  let mk2 = fn(s : String) -> Array[Inline] {
-    [Run(s, Marks::default())]
-  }
+  let mk2 = fn(s : String) -> Array[Inline] { [Run(s, Marks::default())] }
   // **hi** 末尾敲空格 → bold + 光标落文本尾
   let (r1, o1, c1) = reparse_inlines(mk2("**hi**"), 6)
   assert_true(c1)
-  assert_eq(r1, [Run("hi", Marks::{ bold: true, italic: false, strike: false, code: false })])
+  assert_eq(r1, [
+    Run("hi", Marks::{ bold: true, italic: false, strike: false, code: false }),
+  ])
   assert_eq(o1, 2)
   // `code` 字面
   let (r2, o2, c2) = reparse_inlines(mk2("`cd`"), 5)
@@ -387,7 +393,9 @@ test "活行内转换：字面标记原地变样式 + 光标重映射" {
     _ => fail("code run")
   }
   // 幂等：已样式化的不再变化（toggle 出的样式往返不丢）
-  let styled = [Run("hi", Marks::{ bold: true, italic: false, strike: false, code: false })]
+  let styled = [
+    Run("hi", Marks::{ bold: true, italic: false, strike: false, code: false }),
+  ]
   let (_, _, c3) = reparse_inlines(styled, 2)
   assert_true(!c3)
   // 链接：[t](u) → Link 节点，plain 只剩 t
@@ -400,10 +408,7 @@ test "活行内转换：字面标记原地变样式 + 光标重映射" {
     _ => fail("link node")
   }
   // 混合：前段字面 + 后段普通，光标在末尾 → 精确
-  let mix = [
-    Run("**b**", Marks::default()),
-    Run("tail", Marks::default()),
-  ]
+  let mix = [Run("**b**", Marks::default()), Run("tail", Marks::default())]
   let (r5, o5, c5) = reparse_inlines(mix, 9)
   assert_true(c5)
   assert_eq(inlines_plain(r5), "btail")

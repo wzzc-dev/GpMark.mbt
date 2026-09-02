@@ -32,11 +32,15 @@ test "open_path 读取替换文档；save_current_file 回写；tilde 展开" {
   // 打开后编辑 → 回写 → 磁盘内容含新增
   let us = @core.collect_units(ed.blocks)
   let last = us.length() - 1
-  ed.set_sel(@core.collapsed_sel(@core.Caret::{
-    unit: last,
-    offset: us[last].plain.to_array().length(),
-  }))
-  ed.apply_text("wbtest-save", fn(b, s) { @core.doc_insert(b, s, "回写标记") })
+  ed.set_sel(
+    @core.collapsed_sel(@core.Caret::{
+      unit: last,
+      offset: us[last].plain.to_array().length(),
+    }),
+  )
+  ed.apply_text("wbtest-save", fn(b, s) {
+    @core.doc_insert(b, s, "回写标记")
+  })
   match save_current_file() {
     Ok(_) => ()
     Err(e) => abort("save failed: " + e)

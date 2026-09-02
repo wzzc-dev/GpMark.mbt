@@ -12,28 +12,50 @@
 ///|
 pub type Seg = (String, @gpui.RunStyle?)
 
+///|
 let col_text : (Int, Int, Int) = (226, 230, 238)
+
+///|
 let col_muted : (Int, Int, Int) = (140, 146, 158)
+
+///|
 let col_link : (Int, Int, Int) = (96, 168, 255)
+
+///|
 let col_caret : (Int, Int, Int) = (96, 210, 255)
+
+///|
 let col_code : (Int, Int, Int) = (240, 190, 130)
+
+///|
 let col_codebg : (Int, Int, Int) = (48, 52, 64)
+
+///|
 let col_sel : (Int, Int, Int) = (58, 78, 122)
+
+///|
 let col_mark : (Int, Int, Int) = (110, 190, 250)
+
+///|
 let sel_full : Int = 1_000_000
 
 // demo 窗口宽 960；滚动容器左右 padding 28*2；单元左右 padding 6*2。
 // 折行按这个估算宽度进行（窗口缩放不会重新折行——已知限制）。
+
+///|
 let base_avail : Float = 960.0 - 56.0 - 14.0
 
+///|
 fn rgb(c : (Int, Int, Int)) -> @gpui.Color {
   @gpui.Color::rgb(c.0, c.1, c.2)
 }
 
+///|
 fn caret_seg() -> Seg {
   ("▏", Some(@gpui.RunStyle::new(color=rgb(col_caret))))
 }
 
+///|
 /// 把 Marks 映射为 RunStyle 覆盖；链接内文本加色+下划线。
 fn style_of(m : @core.Marks, link : Bool) -> @gpui.RunStyle? {
   if !(m.bold || m.italic || m.strike || m.code || link) {
@@ -45,32 +67,62 @@ fn style_of(m : @core.Marks, link : Bool) -> @gpui.RunStyle? {
   }
   Some(@gpui.RunStyle::{
     color,
-    weight: if m.bold { Some(700) } else { None },
+    weight: if m.bold {
+      Some(700)
+    } else {
+      None
+    },
     italic: m.italic,
     underline: link,
     strikethrough: m.strike,
-    background: if m.code { Some(rgb(col_codebg)) } else { None },
+    background: if m.code {
+      Some(rgb(col_codebg))
+    } else {
+      None
+    },
   })
 }
 
-fn merge_style(base : @gpui.RunStyle?, extra : @gpui.RunStyle?) -> @gpui.RunStyle? {
+///|
+fn merge_style(
+  base : @gpui.RunStyle?,
+  extra : @gpui.RunStyle?,
+) -> @gpui.RunStyle? {
   match (base, extra) {
     (None, e) => e
     (b, None) => b
     (Some(a), Some(c)) =>
       Some(@gpui.RunStyle::{
-        color: if c.color is Some(_) { c.color } else { a.color },
-        weight: if c.weight is Some(_) { c.weight } else { a.weight },
+        color: if c.color is Some(_) {
+          c.color
+        } else {
+          a.color
+        },
+        weight: if c.weight is Some(_) {
+          c.weight
+        } else {
+          a.weight
+        },
         italic: a.italic || c.italic,
         underline: a.underline || c.underline,
         strikethrough: a.strikethrough || c.strikethrough,
-        background: if c.background is Some(_) { c.background } else { a.background },
+        background: if c.background is Some(_) {
+          c.background
+        } else {
+          a.background
+        },
       })
   }
 }
 
+///|
 /// st 游标数组: [0]=caret(-1 无) [1]=sel_lo [2]=sel_hi [3]=caret_done [4]=pos
-fn emit_text(out : Array[Seg], text : String, st : Array[Int], base : @gpui.RunStyle?) -> Unit {
+fn emit_text(
+  out : Array[Seg],
+  text : String,
+  st : Array[Int],
+  base : @gpui.RunStyle?,
+) -> Unit {
   let cs = text.to_array()
   let len = cs.length()
   let start = st[4]
@@ -84,10 +136,10 @@ fn emit_text(out : Array[Seg], text : String, st : Array[Int], base : @gpui.RunS
       out.push(caret_seg())
       st[3] = 1
     }
-    let in_sel = st[2] > st[1] && (start + i) >= st[1] && (start + i) < st[2]
+    let in_sel = st[2] > st[1] && start + i >= st[1] && start + i < st[2]
     let mut j = i + 1
     while j < len {
-      let still_sel = st[2] > st[1] && (start + j) >= st[1] && (start + j) < st[2]
+      let still_sel = st[2] > st[1] && start + j >= st[1] && start + j < st[2]
       let caret_at = st[3] == 0 && start + j == st[0]
       if still_sel != in_sel || caret_at {
         break
@@ -95,14 +147,16 @@ fn emit_text(out : Array[Seg], text : String, st : Array[Int], base : @gpui.RunS
       j = j + 1
     }
     let piece = String::from_array(cs[i:j])
-    out.push((
-      piece,
-      if in_sel {
-        merge_style(base, Some(@gpui.RunStyle::new(background=rgb(col_sel))))
-      } else {
-        base
-      },
-    ))
+    out.push(
+      (
+        piece,
+        if in_sel {
+          merge_style(base, Some(@gpui.RunStyle::new(background=rgb(col_sel))))
+        } else {
+          base
+        },
+      ),
+    )
     i = j
   }
   st[4] = start + len
@@ -112,7 +166,12 @@ fn emit_text(out : Array[Seg], text : String, st : Array[Int], base : @gpui.RunS
   }
 }
 
-fn emit_inlines(out : Array[Seg], ns : Array[@core.Inline], st : Array[Int]) -> Unit {
+///|
+fn emit_inlines(
+  out : Array[Seg],
+  ns : Array[@core.Inline],
+  st : Array[Int],
+) -> Unit {
   for n in ns {
     match n {
       @core.Run(s, m) => emit_text(out, s, st, style_of(m, false))
@@ -130,11 +189,19 @@ fn emit_inlines(out : Array[Seg], ns : Array[@core.Inline], st : Array[Int]) -> 
         st[4] = st2[4]
       }
       @core.Image(_, _) =>
-        emit_text(out, @core.inline_plain(n), st, Some(
-          @gpui.RunStyle::new(color=rgb(col_mark), italic=true),
-        ))
+        emit_text(
+          out,
+          @core.inline_plain(n),
+          st,
+          Some(@gpui.RunStyle::new(color=rgb(col_mark), italic=true)),
+        )
       @core.Footnote(nm) =>
-        emit_text(out, "[^" + nm + "]", st, Some(@gpui.RunStyle::new(color=rgb(col_link))))
+        emit_text(
+          out,
+          "[^" + nm + "]",
+          st,
+          Some(@gpui.RunStyle::new(color=rgb(col_link))),
+        )
     }
   }
   if st[3] == 0 && st[4] >= st[0] && st[0] >= 0 {
@@ -163,6 +230,7 @@ pub fn inline_segments(
 
 // --- 字符级样式流（token 渲染路径用，字符序与 core::inlines_plain 一致）---
 
+///|
 fn push_run_chars(
   out : Array[@gpui.RunStyle?],
   s : String,
@@ -187,8 +255,9 @@ fn push_run_chars(
   }
 }
 
+///|
 fn push_char_styles(
-  out : Array[(@gpui.RunStyle)?],
+  out : Array[@gpui.RunStyle?],
   ns : Array[@core.Inline],
   lo : Int,
   hi : Int,
@@ -198,7 +267,14 @@ fn push_char_styles(
   for n in ns {
     match n {
       @core.Run(s, m) =>
-        push_run_chars(out, s, lo, hi, merge_style(base, style_of(m, false)), pos)
+        push_run_chars(
+          out,
+          s,
+          lo,
+          hi,
+          merge_style(base, style_of(m, false)),
+          pos,
+        )
       @core.Link(_, inner) =>
         push_char_styles(
           out,
@@ -214,7 +290,10 @@ fn push_char_styles(
           @core.inline_plain(n),
           lo,
           hi,
-          merge_style(base, Some(@gpui.RunStyle::new(color=rgb(col_mark), italic=true))),
+          merge_style(
+            base,
+            Some(@gpui.RunStyle::new(color=rgb(col_mark), italic=true)),
+          ),
           pos,
         )
       @core.Footnote(nm) =>
@@ -230,13 +309,14 @@ fn push_char_styles(
   }
 }
 
+///|
 fn char_styles(
   ns : Array[@core.Inline],
   lo : Int,
   hi : Int,
   bold : Bool,
-) -> Array[(@gpui.RunStyle)?] {
-  let out : Array[(@gpui.RunStyle)?] = []
+) -> Array[@gpui.RunStyle?] {
+  let out : Array[@gpui.RunStyle?] = []
   let base = if bold { Some(@gpui.RunStyle::new(weight=700)) } else { None }
   push_char_styles(out, ns, lo, hi, base, [0])
   out
@@ -244,8 +324,10 @@ fn char_styles(
 
 // --- token 布局表（点击定位契约：app 侧按单元下标查 token 起点）-----------
 
+///|
 let unit_starts : Array[Array[Int]] = []
 
+///|
 fn remember_starts(unit : Int, starts : Array[Int]) -> Unit {
   while unit_starts.length() <= unit {
     unit_starts.push([])
@@ -264,11 +346,13 @@ pub fn tok_starts_of(unit : Int) -> Array[Int] {
   }
 }
 
+///|
 fn col_eq(a : @gpui.Color, b : @gpui.Color) -> Bool {
   a.red == b.red && a.green == b.green && a.blue == b.blue && a.alpha == b.alpha
 }
 
-fn copt_eq(a : (@gpui.Color)?, b : (@gpui.Color)?) -> Bool {
+///|
+fn copt_eq(a : @gpui.Color?, b : @gpui.Color?) -> Bool {
   match (a, b) {
     (None, None) => true
     (Some(x), Some(y)) => col_eq(x, y)
@@ -276,24 +360,27 @@ fn copt_eq(a : (@gpui.Color)?, b : (@gpui.Color)?) -> Bool {
   }
 }
 
-fn sty_eq(a : (@gpui.RunStyle)?, b : (@gpui.RunStyle)?) -> Bool {
+///|
+fn sty_eq(a : @gpui.RunStyle?, b : @gpui.RunStyle?) -> Bool {
   match (a, b) {
     (None, None) => true
     (Some(x), Some(y)) =>
       copt_eq(x.color, y.color) &&
-        x.weight == y.weight &&
-        x.italic == y.italic &&
-        x.underline == y.underline &&
-        x.strikethrough == y.strikethrough &&
-        copt_eq(x.background, y.background)
+      x.weight == y.weight &&
+      x.italic == y.italic &&
+      x.underline == y.underline &&
+      x.strikethrough == y.strikethrough &&
+      copt_eq(x.background, y.background)
     _ => false
   }
 }
 
 // token 字符范围 → 渲染段（同样式相邻字符合并；光标恰好插在偏移处）
+
+///|
 fn token_segs(
   chars : Array[Char],
-  styles : Array[(@gpui.RunStyle)?],
+  styles : Array[@gpui.RunStyle?],
   s : Int,
   e : Int,
 ) -> Array[Seg] {
@@ -316,12 +403,49 @@ fn token_segs(
 // 文本、后是光标条——插入点在组词文本之后。取代旧的顶栏「输入中」组合条。
 // 浮动行 key="caret"，桥层（gpui-sys）据此捕获其窗口矩形做候选窗锚点。
 
+///|
 let preedit_text : Ref[String] = { val: "" }
 
 ///|
 /// 推入当前组词文本（空串 = 无组词）。须在 render_doc_window 之前调用。
-pub fn set_preedit(text : String) -> Unit { preedit_text.val = text }
+pub fn set_preedit(text : String) -> Unit {
+  preedit_text.val = text
+}
 
+// --- 几何探针 key（鼠标命中回传通道） ---------------------------------------
+// 每个 token div 与行尾空白区 div 都带 set_key("probe:…")。桥层的
+// ProbeBoundsProbe 在 paint 时记录其真实布局矩形（窗口坐标，含滚动位移），
+// app 经 gpui_probe_rect 拉回，把鼠标坐标映射为 (unit, offset)——拖拽选区
+// 的插入点与点击的插入点出自同一份布局，位置一致。key 里带 gen 代号：
+// 每次 rebuild 递增；root 的首个零尺寸子节点带 "probe:clear"，帧初清空
+// 桥层表，保证拉到的永远是当帧几何（滚动/重建后不会读到旧矩形）。
+
+///|
+let probe_gen : Ref[Int] = { val: 0 }
+
+///|
+/// token 探针 key：单元 unit 的第 ti 个 token（与 tok_starts_of 下标一致）。
+pub fn probe_token_key(unit : Int, ti : Int) -> String {
+  "probe:t" +
+  probe_gen.val.to_string() +
+  ":" +
+  unit.to_string() +
+  ":" +
+  ti.to_string()
+}
+
+///|
+/// 行尾空白区探针 key：ti = 该单元的 token 数（starts 末位哨兵下标）。
+pub fn probe_tail_key(unit : Int, ti : Int) -> String {
+  "probe:x" +
+  probe_gen.val.to_string() +
+  ":" +
+  unit.to_string() +
+  ":" +
+  ti.to_string()
+}
+
+///|
 /// 零宽光标：绝对定位的 2px 光标条，挂在 token div 内左缘——脱离排版
 /// 流，不占宽度、不推走后面的字；top/bottom=0 使高度自动等于行高。
 /// 它自己带同款点击 handler，2px 条带上的点击不会落空。
@@ -353,10 +477,12 @@ fn caret_overlay(
     cb.set_on_click(rtok(unit, ti))
     cb.set_key("caret")
     cb.rich_text(
-      [(
-        preedit_text.val,
-        Some(@gpui.RunStyle::new(underline=true, color=rgb(col_caret))),
-      )],
+      [
+        (
+          preedit_text.val,
+          Some(@gpui.RunStyle::new(underline=true, color=rgb(col_caret))),
+        ),
+      ],
       col_text.0,
       col_text.1,
       col_text.2,
@@ -371,6 +497,7 @@ fn caret_overlay(
   }
 }
 
+///|
 fn tail_zone(
   cb : @gpui.CommandBuffer,
   unit : Int,
@@ -383,12 +510,14 @@ fn tail_zone(
   cb.set_flex(1.0, 0.0, 0.0)
   cb.set_cursor(@gpui.CURSOR_TEXT)
   cb.set_on_click(rtok(unit, ti))
+  cb.set_key(probe_tail_key(unit, ti))
   if show_caret {
     caret_overlay(cb, unit, ti, rtok, size)
   }
   cb.add_child()
 }
 
+///|
 /// 一段 inline 文本 → 折行的 token 行。caret/lo/hi 语义同 inline_segments。
 fn push_text(
   cb : @gpui.CommandBuffer,
@@ -416,6 +545,7 @@ fn push_text(
     cb.set_cursor(@gpui.CURSOR_TEXT)
     cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
     cb.set_on_click(rtok(unit, 0))
+    cb.set_key(probe_token_key(unit, 0))
     cb.rich_text([(" ", None)], col_text.0, col_text.1, col_text.2, size)
     cb.add_child() // rich_text → token div
     if caret == 0 {
@@ -465,6 +595,7 @@ fn push_text(
       cb.set_cursor(@gpui.CURSOR_TEXT)
       cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
       cb.set_on_click(rtok(unit, t.2))
+      cb.set_key(probe_token_key(unit, t.2))
       cb.rich_text(
         token_segs(chars, styles, t.0, t.0 + t.1),
         col_text.0,
@@ -487,6 +618,7 @@ fn push_text(
   cb.add_child()
 }
 
+///|
 fn heading_size(level : Int) -> Float {
   match level {
     1 => 30.0
@@ -502,7 +634,12 @@ fn heading_size(level : Int) -> Float {
 /// 一个块产出的编辑单元数（与 core::collect_units 的顺序契约一致）。
 pub fn count_units_of(b : @core.Block) -> Int {
   match b {
-    @core.Heading(_, _) | @core.Paragraph(_) | @core.CodeBlock(_, _) | @core.Hr | @core.ImageBlock(_, _) | @core.Raw(_) => 1
+    @core.Heading(_, _)
+    | @core.Paragraph(_)
+    | @core.CodeBlock(_, _)
+    | @core.Hr
+    | @core.ImageBlock(_, _)
+    | @core.Raw(_) => 1
     @core.Quote(inner) => sum_int(inner.map(count_units_of))
     @core.ListBlock(_, items) =>
       sum_int(items.map(it => 1 + sum_int(it.children.map(count_units_of))))
@@ -510,32 +647,44 @@ pub fn count_units_of(b : @core.Block) -> Int {
   }
 }
 
+///|
 /// 选区规范化端点 → 当前单元 (cursor, lo, hi)
-fn unit_sel_window(sel_a : @core.Caret, sel_b : @core.Caret, cur : Int) -> (Int, Int, Int) {
+fn unit_sel_window(
+  sel_a : @core.Caret,
+  sel_b : @core.Caret,
+  cur : Int,
+) -> (Int, Int, Int) {
   if sel_a == sel_b {
     return (if sel_a.unit == cur { sel_a.offset } else { -1 }, -1, -1)
   }
   // 有选区：光标显示在 focus（sel_b）所在单元
   let caret = if sel_b.unit == cur { sel_b.offset } else { -1 }
-  let lo =
-    if sel_a.unit < cur && cur < sel_b.unit {
-      0
-    } else if sel_a.unit == cur {
-      sel_a.offset
+  let lo = if sel_a.unit < cur && cur < sel_b.unit {
+    0
+  } else if sel_a.unit == cur {
+    sel_a.offset
+  } else {
+    -1
+  }
+  let hi = if cur < sel_b.unit {
+    if lo == 0 || lo > 0 {
+      sel_full
     } else {
       -1
     }
-  let hi =
-    if cur < sel_b.unit {
-      if lo == 0 || lo > 0 { sel_full } else { -1 }
-    } else if cur == sel_b.unit {
-      if lo >= 0 { sel_b.offset } else { -1 }
+  } else if cur == sel_b.unit {
+    if lo >= 0 {
+      sel_b.offset
     } else {
       -1
     }
+  } else {
+    -1
+  }
   (caret, lo, hi)
 }
 
+///|
 fn push_rich(
   cb : @gpui.CommandBuffer,
   segs : Array[Seg],
@@ -582,6 +731,7 @@ pub fn render_doc_window(
   rbox : (Int) -> Int,
   rtok : (Int, Int) -> Int,
 ) -> Unit {
+  probe_gen.val = probe_gen.val + 1 // 本帧探针 key 的代号（见「几何探针 key」）
   let sel_a = @core.sel_start(sel)
   let sel_b = @core.sel_end(sel)
   let mut cur = cur0
@@ -596,11 +746,19 @@ pub fn render_doc_window(
 // 常数与 render_block 的分支一一对应，spacer 高度因此 ≈ 实际渲染高度
 // （宽度估算本身有 ±10% 级别出入，见 framework-gaps §4，滚动行程为近似）。
 
-fn line_h(size : Float) -> Float { size * 1.63 }
+///|
+fn line_h(size : Float) -> Float {
+  size * 1.63
+}
 
+///|
 fn text_rows(ns : Array[@core.Inline], size : Float, avail : Float) -> Int {
   let n = layout_text(@core.inlines_plain(ns).to_array(), size, avail).rows.length()
-  if n == 0 { 1 } else { n }
+  if n == 0 {
+    1
+  } else {
+    n
+  }
 }
 
 ///|
@@ -613,16 +771,22 @@ pub fn estimate_slot_height(b : @core.Block, avail : Float) -> Float {
   }
 }
 
+///|
 fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
   match b {
     @core.Heading(l, inls) =>
-      Float::from_int(text_rows(inls, heading_size(l), avail)) * line_h(heading_size(l))
-    @core.Paragraph(inls) => Float::from_int(text_rows(inls, 15.0, avail)) * line_h(15.0)
+      Float::from_int(text_rows(inls, heading_size(l), avail)) *
+      line_h(heading_size(l))
+    @core.Paragraph(inls) =>
+      Float::from_int(text_rows(inls, 15.0, avail)) * line_h(15.0)
     @core.CodeBlock(lang, code) => {
       let label : Float = if lang != "" { line_h(11.0) } else { 0.0 }
       let lines = @core.split_lines_str(code).length()
-      let body : Float =
-        if lines == 0 { 22.0 } else { Float::from_int(lines) * line_h(13.5) }
+      let body : Float = if lines == 0 {
+        22.0
+      } else {
+        Float::from_int(lines) * line_h(13.5)
+      }
       label + 20.0 + body
     }
     @core.Quote(inner) => {
@@ -638,8 +802,10 @@ fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
     @core.ListBlock(_, items) => {
       let mut h : Float = 0.0
       for it in items {
-        let mut item_h =
-          Float::from_int(text_rows(it.content, 15.0, avail - 30.0)) * line_h(15.0)
+        let mut item_h = Float::from_int(
+            text_rows(it.content, 15.0, avail - 30.0),
+          ) *
+          line_h(15.0)
         if item_h < line_h(15.0) {
           item_h = line_h(15.0)
         }
@@ -673,7 +839,11 @@ fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
         for ri = 0; ri < t.rows.length(); ri = ri + 1 {
           let row = t.rows[ri]
           if c < row.length() {
-            let cw = cell_px(@core.inlines_plain(row[c]).to_array(), 14.0, t.has_header && ri == 0)
+            let cw = cell_px(
+              @core.inlines_plain(row[c]).to_array(),
+              14.0,
+              t.has_header && ri == 0,
+            )
             if cw > w {
               w = cw
             }
@@ -688,8 +858,11 @@ fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
       for row in t.rows {
         let mut rh : Float = 0.0
         for ci = 0; ci < row.length(); ci = ci + 1 {
-          let cell_h =
-            Float::from_int(text_rows(row[ci], 14.0, colw[ci] - 24.0)) * line_h(14.0) + 8.0
+          let cell_h = Float::from_int(
+              text_rows(row[ci], 14.0, colw[ci] - 24.0),
+            ) *
+            line_h(14.0) +
+            8.0
           if cell_h > rh {
             rh = cell_h
           }
@@ -702,13 +875,16 @@ fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
     @core.Hr => 14.0
     @core.Raw(_) => {
       let cs = @core.block_plain(b).to_array()
-      Float::from_int(layout_text(cs, 13.0, avail).rows.length()).max(1.0) * line_h(13.0)
+      Float::from_int(layout_text(cs, 13.0, avail).rows.length()).max(1.0) *
+      line_h(13.0)
     }
   }
 }
 
 // 叶子块：标题/段落走 token 点击区；代码块/HR/图片/Raw 保留整块点击
 // （光标落块尾）。容器块（引用/列表/表格）内每个单元自带点击区。
+
+///|
 fn render_slot(
   cb : @gpui.CommandBuffer,
   b : @core.Block,
@@ -741,6 +917,7 @@ fn render_slot(
   cb.add_child()
 }
 
+///|
 fn render_block(
   cb : @gpui.CommandBuffer,
   b : @core.Block,
@@ -755,19 +932,21 @@ fn render_block(
   // 叶子块的单元就是 cur；容器块（列表/表格）内每个单元各自重算窗口
   let (caret, lo, hi) = unit_sel_window(sel_a, sel_b, cur)
   match b {
-    @core.Heading(l, inls) => push_text(
-      cb,
-      inls,
-      caret,
-      lo,
-      hi,
-      heading_size(l),
-      avail,
-      cur,
-      rtok,
-      true,
-    )
-    @core.Paragraph(inls) => push_text(cb, inls, caret, lo, hi, 15.0, avail, cur, rtok, false)
+    @core.Heading(l, inls) =>
+      push_text(
+        cb,
+        inls,
+        caret,
+        lo,
+        hi,
+        heading_size(l),
+        avail,
+        cur,
+        rtok,
+        true,
+      )
+    @core.Paragraph(inls) =>
+      push_text(cb, inls, caret, lo, hi, 15.0, avail, cur, rtok, false)
     @core.CodeBlock(lang, code) => {
       if lang != "" {
         cb.text(lang, col_muted.0, col_muted.1, col_muted.2, 11.0)
@@ -822,7 +1001,18 @@ fn render_block(
         cb.div()
         cb.set_flex(1.0, 1.0, 0.0)
         let (ic, ilo, ihi) = unit_sel_window(sel_a, sel_b, c2)
-        push_text(cb, it.content, ic, ilo, ihi, 15.0, avail - 30.0, c2, rtok, false)
+        push_text(
+          cb,
+          it.content,
+          ic,
+          ilo,
+          ihi,
+          15.0,
+          avail - 30.0,
+          c2,
+          rtok,
+          false,
+        )
         cb.add_child()
         cb.add_child() // row
         if it.children.length() > 0 {
@@ -927,9 +1117,14 @@ fn render_block(
         ),
       ]
       let st = [caret, lo, hi, 0, 0]
-      emit_text(segs, @core.block_plain(b), st, Some(
-        @gpui.RunStyle::new(color=rgb(col_muted), background=rgb(col_codebg)),
-      ))
+      emit_text(
+        segs,
+        @core.block_plain(b),
+        st,
+        Some(
+          @gpui.RunStyle::new(color=rgb(col_muted), background=rgb(col_codebg)),
+        ),
+      )
       if st[3] == 0 && caret >= 0 {
         segs.push(caret_seg())
       }
@@ -938,6 +1133,7 @@ fn render_block(
   }
 }
 
+///|
 fn render_code(
   cb : @gpui.CommandBuffer,
   code : String,
@@ -962,9 +1158,16 @@ fn render_code(
     let (lc, ll, lh) = line_window(caret, lo, hi, line_start, len)
     let st = [lc, ll, lh, 0, 0]
     let segs : Array[Seg] = []
-    emit_text(segs, if line == "" { " " } else { line }, st, Some(
-      @gpui.RunStyle::new(color=rgb(col_code)),
-    ))
+    emit_text(
+      segs,
+      if line == "" {
+        " "
+      } else {
+        line
+      },
+      st,
+      Some(@gpui.RunStyle::new(color=rgb(col_code))),
+    )
     if st[3] == 0 && lc >= 0 {
       segs.push(caret_seg())
     }
@@ -975,7 +1178,15 @@ fn render_code(
 }
 
 // 全局字符范围映射到行内范围
-fn line_window(caret : Int, lo : Int, hi : Int, ls : Int, len : Int) -> (Int, Int, Int) {
+
+///|
+fn line_window(
+  caret : Int,
+  lo : Int,
+  hi : Int,
+  ls : Int,
+  len : Int,
+) -> (Int, Int, Int) {
   let le = ls + len
   let c = if caret >= ls && caret <= le { caret - ls } else { -1 }
   let mut l = -1
@@ -994,6 +1205,7 @@ fn line_window(caret : Int, lo : Int, hi : Int, ls : Int, len : Int) -> (Int, In
   (c, l, h)
 }
 
+///|
 fn sum_int(xs : Array[Int]) -> Int {
   let mut s = 0
   for x in xs {
@@ -1033,6 +1245,7 @@ pub fn render_top_bar(
   cb.add_child() // bar → root
 }
 
+///|
 fn top_button(
   cb : @gpui.CommandBuffer,
   slot : Int,

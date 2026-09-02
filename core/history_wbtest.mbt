@@ -8,7 +8,7 @@ fn _csel2(unit : Int, offset : Int) -> Sel {
 test "连续键入折叠为一次 undo" {
   let ed = Editor::new([Paragraph([])])
   for k = 0; k < 10; k = k + 1 {
-      ed.apply_text("t0", fn(b, s) { doc_insert(b, s, "字") })
+    ed.apply_text("t0", fn(b, s) { doc_insert(b, s, "字") })
     assert_true(ed.undo_stack.length() == 1)
   }
   assert_eq(block_plain(ed.blocks[0]), "字字字字字字字字字字")

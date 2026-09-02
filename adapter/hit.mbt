@@ -1,0 +1,171 @@
+/// 鼠标坐标命中测试：窗口像素坐标 → 插入点 (unit, offset)。
+///
+/// 渲染层给每个 token / 行尾空白区 div 挂探针 key（render.mbt），gpui-sys
+/// 在 paint 时记录其真实布局矩形，这里经 gpui_probe_rect 拉回并按行/列映
+/// 射为光标位置。与点击定位同源（都读同一份 token 布局），拖拽光标不会和
+/// 点击光标互相矛盾；用真实布局矩形而非高度/宽度估算，落点精确。
+///
+/// 本文件是 adapter 里放鼠标/探针 extern 声明的位置（render.mbt 契约：不
+/// 做任何 FFI 调用）；符号由 gpui-sys 静态库提供，可执行文件链接时解析，
+/// 与 bindings.mbt 其余 @gpui extern 同一形态（moon test 容忍未定义符号）。
+
+///|
+#borrow(buf, out)
+extern "c" fn gpui_probe_rect_ffi(buf : Bytes, len : Int, out : Bytes) -> Int = "gpui_probe_rect"
+
+///|
+fn le_i32(bs : Bytes, i : Int) -> Int {
+  let v = (bs[i].to_int() & 0xff) |
+    ((bs[i + 1].to_int() & 0xff) << 8) |
+    ((bs[i + 2].to_int() & 0xff) << 16) |
+    ((bs[i + 3].to_int() & 0xff) << 24)
+  if v >= 1 << 31 {
+    v - (1 << 32)
+  } else {
+    v
+  }
+}
+
+///|
+/// 探针 key 的当帧布局矩形 (x, y, w, h)，窗口坐标、取整像素。
+/// None = 该 key 本帧没有绘制（窗口外 / 未渲染）。
+pub fn probe_rect(key : String) -> (Float, Float, Float, Float)? {
+  let bs = @utf8.encode(key)
+  let out = Bytes::make(16, b'\x00')
+  if gpui_probe_rect_ffi(bs, bs.length(), out) == 0 {
+    Some(
+      (
+        le_i32(out, 0).to_float(),
+        le_i32(out, 4).to_float(),
+        le_i32(out, 8).to_float(),
+        le_i32(out, 12).to_float(),
+      ),
+    )
+  } else {
+    None
+  }
+}
+
+///|
+/// 解码桥层 0xEF 鼠标负载 [tag, phase, x i32LE, y i32LE]。
+/// phase：0 按下 / 1 拖拽移动 / 2 释放。非鼠标负载返回 None。
+pub fn decode_mouse(payload : Bytes) -> (Int, Int, Int)? {
+  if payload.length() >= 10 && payload[0] == 0xEF {
+    Some((payload[1].to_int() & 0xff, le_i32(payload, 2), le_i32(payload, 6)))
+  } else {
+    None
+  }
+}
+
+///|
+/// 候选矩形：token 或行尾空白区。(x, y, x1, y1, unit, lo, hi)——
+/// [lo, hi] 是该矩形水平覆盖的可寻字符偏移闭区间。
+type Hit = (Float, Float, Float, Float, Int, Int, Int)
+
+///|
+/// 窗口坐标 (vx, vy) → 插入点。单元区间 [u0, u1) 为当前渲染窗口对应的
+/// 编辑单元范围；probe 注入几何查询（生产用 probe_rect，测试用假几何）。
+/// 当帧无任何几何（未 paint）时返回 None。
+pub fn caret_at_point(
+  vx : Int,
+  vy : Int,
+  u0 : Int,
+  u1 : Int,
+  us : Array[@core.UnitRef],
+  probe : (String) -> (Float, Float, Float, Float)?,
+) -> @core.Caret? {
+  let vxf = vx.to_float()
+  let vyf = vy.to_float()
+  let hits : Array[Hit] = []
+  let mut u = if u0 < 0 { 0 } else { u0 }
+  let uend = if u1 > us.length() { us.length() } else { u1 }
+  while u < uend {
+    let starts = tok_starts_of(u)
+    if starts.length() > 0 {
+      let ntok = starts.length() - 1
+      let ulen = us[u].plain.to_array().length()
+      let mut ti = 0
+      while ti <= ntok {
+        let key = if ti < ntok {
+          probe_token_key(u, ti)
+        } else {
+          probe_tail_key(u, ti)
+        }
+        match probe(key) {
+          Some((x, y, w, h)) => {
+            let lo = starts[ti]
+            let hi = if ti < ntok { starts[ti + 1] } else { ulen }
+            hits.push(
+              (x, y, x + w, y + h, u, lo, if hi > lo { hi } else { lo }),
+            )
+          }
+          None => ()
+        }
+        ti = ti + 1
+      }
+    }
+    u = u + 1
+  }
+  if hits.length() == 0 {
+    return None
+  }
+  // 行：优先取垂直包含 vy 的矩形；都不包含则取垂直距离最近的（行缝、
+  // 段落间隙里的拖拽也吸附到邻行，行为与主流编辑器一致）。
+  let mut best = 0
+  let mut best_d : Float = 1000000000000000.0
+  for i = 0; i < hits.length(); i = i + 1 {
+    let h = hits[i]
+    let d : Float = if vyf >= h.1 && vyf <= h.3 {
+      -1.0
+    } else if vyf < h.1 {
+      h.1 - vyf
+    } else {
+      vyf - h.3
+    }
+    if d < best_d {
+      best = i
+      best_d = d
+    }
+  }
+  let row = hits[best]
+  if best_d > 20.0 {
+    // 距任何一行都超过一行的量级（顶栏、段落间大空白）：视为点空白，
+    // 不动光标——主流编辑器同样不在远处空白落点。
+    return None
+  }
+  // 同一行 = y 起点一致（同行各 token 由同一 row div 布局，矩形等高）；
+  // 行内取「左缘 ≤ vx 中最靠右」的矩形，vx 在行首之前则取行首矩形。
+  let mut pi = -1
+  let mut li = best
+  for i = 0; i < hits.length(); i = i + 1 {
+    let h = hits[i]
+    if (h.1 - row.1).abs() >= 1.0 {
+      continue
+    }
+    if h.0 < hits[li].0 {
+      li = i
+    }
+    if h.0 <= vxf && (pi < 0 || h.0 > hits[pi].0) {
+      pi = i
+    }
+  }
+  let pick = if pi >= 0 { hits[pi] } else { hits[li] }
+  // 区间内按水平比例插值到 [lo, hi]；落在矩形右侧（区间缝隙/尾空白）取 hi。
+  let span = (pick.6 - pick.5).to_float()
+  let w = pick.2 - pick.0
+  let off = if vxf >= pick.2 || w <= 0.0 {
+    pick.6
+  } else {
+    let frac = (vxf - pick.0) / w
+    let k = (frac * span + 0.5).floor().to_int()
+    pick.5 + k
+  }
+  let mut o = off
+  if o < pick.5 {
+    o = pick.5
+  }
+  if o > pick.6 {
+    o = pick.6
+  }
+  Some(@core.Caret::{ unit: pick.4, offset: o })
+}

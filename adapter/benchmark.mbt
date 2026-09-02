@@ -28,10 +28,17 @@ fn summary(
   "\",\"frame_work_samples_ms\":[" +
   samples.map(value => value.to_string()).join(",") +
   "],\"frame_interval_samples_ms\":[],\"input_to_visible_samples_ms\":[" +
-  (if scenario == "input" { samples.map(value => value.to_string()).join(",") } else { "" }) +
-  "],\"offscreen_samples_ms\":[" + samples.map(_ => "null").join(",") +
-  "],\"readback_samples_ms\":[" + samples.map(_ => "null").join(",") +
-  "],\"offscreen_readback_samples_ms\":[" + samples.map(_ => "null").join(",") +
+  (if scenario == "input" {
+    samples.map(value => value.to_string()).join(",")
+  } else {
+    ""
+  }) +
+  "],\"offscreen_samples_ms\":[" +
+  samples.map(_ => "null").join(",") +
+  "],\"readback_samples_ms\":[" +
+  samples.map(_ => "null").join(",") +
+  "],\"offscreen_readback_samples_ms\":[" +
+  samples.map(_ => "null").join(",") +
   "],\"frame_work_ms\":" +
   mean.to_string() +
   ",\"frame_interval_ms\":null,\"input_to_visible_ms\":" +
@@ -39,8 +46,13 @@ fn summary(
   ",\"offscreen_ms\":null,\"readback_ms\":null,\"offscreen_readback_ms\":null,\"frame_work_p95_ms\":" +
   percentile(samples, 0.95).to_string() +
   ",\"frame_interval_p95_ms\":null,\"input_to_visible_p95_ms\":" +
-  (if scenario == "input" { percentile(samples, 0.95).to_string() } else { "null" }) +
-  ",\"dropped_display_frames\":" + "0" +
+  (if scenario == "input" {
+    percentile(samples, 0.95).to_string()
+  } else {
+    "null"
+  }) +
+  ",\"dropped_display_frames\":" +
+  "0" +
   ",\"first_interactive_ms\":null,\"document_load_ms\":" +
   document_load_ms.to_string() +
   ",\"viewport\":{\"width\":1280,\"height\":800},\"font\":\"system-ui 16px\",\"line_height\":1.55,\"overscan\":3,\"virtual_row_height\":66}"

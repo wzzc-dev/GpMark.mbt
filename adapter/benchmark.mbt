@@ -1,7 +1,15 @@
-/// 基准模式（md_editor gpui2 适配器用）：headless-render 诊断行与真实窗口
-/// ui-frame 帧循环。协议与 md_editor 的 gpui v1 适配器逐字段一致，仅适配器
-/// 名不同（ui-frame 行由 fork 的 Rust 报告在 UI_BENCHMARK_ADAPTER_NAME 下打
-/// 上 "gpui2"；headless 行在这里直接输出）。
+/// 基准模式（md_editor gpui 适配器用）：headless-render 诊断行与真实窗口
+/// ui-frame 帧循环。协议与 md_editor 的 ui-frame 行逐字段一致：ui-frame 行
+/// 由 fork 的 Rust 报告在 UI_BENCHMARK_ADAPTER_NAME 下打出；headless 行在
+/// 这里直接输出，适配器名同样取该环境变量（默认 "gpui"）。
+
+///|
+fn benchmark_adapter_name() -> String {
+  match (@env.get_env_var("UI_BENCHMARK_ADAPTER_NAME")) {
+    Some(name) if name.length() > 0 => name
+    _ => "gpui"
+  }
+}
 
 ///|
 fn now_ms() -> Double {
@@ -23,7 +31,7 @@ fn summary(
 ) -> String {
   let mean = samples.fold(init=0.0, fn(total, value) { total + value }) /
     samples.length().to_double()
-  "{\"adapter\":\"gpui2\",\"measurement_scope\":\"headless-render\",\"scenario\":\"" +
+  "{\"adapter\":\"" + benchmark_adapter_name() + "\",\"measurement_scope\":\"headless-render\",\"scenario\":\"" +
   scenario +
   "\",\"frame_work_samples_ms\":[" +
   samples.map(value => value.to_string()).join(",") +
@@ -64,7 +72,7 @@ pub fn run_headless_benchmark(fixture : String, scenario : String) -> Unit {
   let source = @fs.read_file_to_string(fixture) catch {
     _ => {
       println(
-        "{\"adapter\":\"gpui2\",\"status\":\"error\",\"error\":\"fixture unreadable\"}",
+        "{\"adapter\":\"" + benchmark_adapter_name() + "\",\"status\":\"error\",\"error\":\"fixture unreadable\"}",
       )
       return
     }
@@ -159,5 +167,5 @@ pub fn run_ui_benchmark(
   if status == 0 {
     exit(0)
   }
-  abort("gpui2 benchmark window failed with status \{status}")
+  abort("gpui benchmark window failed with status \{status}")
 }

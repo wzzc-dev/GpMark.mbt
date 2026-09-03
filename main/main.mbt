@@ -12,7 +12,7 @@ fn now_ms() -> Double {
 ///|
 fn main {
   let args = @env.args()
-  // md_editor gpui2 适配器协议：--benchmark 为 headless-render 诊断行，
+  // md_editor gpui 适配器协议：--benchmark 为 headless-render 诊断行，
   // --ui-benchmark 为真实窗口 ui-frame 帧循环（Rust 侧打印 JSON 后退出）。
   if args.length() >= 4 && args[1] == "--benchmark" {
     @mdmbt/adapter.run_headless_benchmark(args[2], args[3])
@@ -21,7 +21,7 @@ fn main {
   if args.length() >= 4 && args[1] == "--ui-benchmark" {
     let load_started = now_ms()
     let source = @fs.read_file_to_string(args[2]) catch {
-      _ => abort("gpui2 benchmark fixture is unreadable")
+      _ => abort("gpui benchmark fixture is unreadable")
     }
     @nakake/gpui-bindings.register_dispatch(@mdmbt/adapter.dispatch)
     @mdmbt/adapter.run_ui_benchmark(

@@ -175,4 +175,7 @@ input mode）判定，第三方输入法（搜狗、微信等）与系统拼音�
   framework-gaps §12）；滚轮可达任意位置。
 - 导出时行内特殊字符（如 `*`）不做反斜杠转义，含字面样式符号的文本
   往返可能有歧义；Raw 块本身零损失。
-- 仅 macOS arm64 本地验证；无跨平台 CI。
+- 仅 macOS arm64 本地验证；Linux x86_64 / Windows x64 由 GitHub Actions CI
+  构建验证（能编译、能产出二进制），未做交互验证。非 macOS 上文件对话框
+  降级为「取消」（osascript 仅 macOS），剪贴板 Windows 尽力而为、Linux 不可用
+  （见 adapter/*_stub.c）。

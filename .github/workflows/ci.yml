@@ -1,0 +1,108 @@
+name: CI
+
+# md_mbt 三平台二进制构建：core/adapter 单测 + native 构建 + 产物上传。
+# - macOS arm64（主验证平台）：build.sh 全链路 + 无头 selftest。
+# - Linux x86_64 / Windows x64：moon build 经 link 包 prebuild（build.py）驱动
+#   cargo 构建 gpui-sys 并注入链接参数，链路已在上游 gpui-moonbit CI 三平台验证；
+#   剪贴板/文件对话框在非 macOS 走降级实现（见 adapter/*_stub.c）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: md-mbt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      # dev profile 的 rlib 体积近半是 debug 段（CI 不看行号），关掉省编译/链接与缓存体积。
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-14
+          - name: Linux x86_64
+            os: ubuntu-latest
+          - name: Windows x64
+            os: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # third_party/gpui-moonbit 以 submodule 引入（公开仓库，token 不覆盖也能匿名拉取）
+          submodules: recursive
+
+      - name: Set up MoonBit
+        uses: hustcer/setup-moonbit@v1
+        with:
+          version: latest
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: third_party/gpui-moonbit/gpui-sys
+
+      - name: Install XCB/XKB development libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libc6-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+
+      - name: Toolchain versions
+        run: |
+          moon version --all
+          rustc --version
+          cargo --version
+          python3 --version
+
+      - name: Resolve MoonBit dependencies
+        run: moon update
+
+      - name: Unit tests (core + adapter, no GUI)
+        run: moon test core adapter --target native
+
+      # macOS 走项目入口 build.sh（staticlib 检查 + moon build）；
+      # Linux/Windows 由 link 包 prebuild 在 moon build 内完成 cargo 构建与链接参数注入。
+      - name: Build (native)
+        if: runner.os == 'macOS'
+        run: ./build.sh
+
+      - name: Build (native, prebuild-driven)
+        if: runner.os != 'macOS'
+        run: moon build --target native
+
+      # selftest 走真实 FFI 链路，README 验证过的无头环境是 macOS。
+      - name: Selftest (real FFI chain, headless)
+        if: runner.os == 'macOS'
+        run: |
+          ./_build/native/debug/build/mdmbt/selftest/selftest.exe | tee selftest.log
+          grep -q "SELFTEST PASS" selftest.log
+
+      - name: Upload native binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdmbt-${{ matrix.name }}
+          path: |
+            _build/native/debug/build/mdmbt/main/main.exe
+            _build/native/debug/build/mdmbt/selftest/selftest.exe
+          if-no-files-found: error
+          retention-days: 7

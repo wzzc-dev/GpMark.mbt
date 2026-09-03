@@ -3,7 +3,9 @@
 // 对话框由独立 osascript 进程承载——不引用 objc/AppKit，adapter 的测试
 // 可执行文件零框架链接依赖（与 clipboard_stub.c 的 pbcopy/pbpaste 同一
 // 形态）。对话框打开期间本进程阻塞在 popen 上（模态语义），取消/出错
-// 返回 -1。仅 macOS。
+// 返回 -1。osascript 仅 macOS：其余平台返回 -1（上层视为「取消」）。
+
+#ifdef __APPLE__
 
 #include <stdio.h>
 #include <string.h>
@@ -52,3 +54,20 @@ int gpui_pick_save_file(char *buf, int cap) {
       "prompt \"保存文件\")",
       buf, cap);
 }
+
+#else  // !__APPLE__
+
+// 非 macOS：无 osascript，两个入口都按「取消」返回，上层得到 None。
+int gpui_pick_file(char *buf, int cap) {
+  (void)buf;
+  (void)cap;
+  return -1;
+}
+
+int gpui_pick_save_file(char *buf, int cap) {
+  (void)buf;
+  (void)cap;
+  return -1;
+}
+
+#endif  // __APPLE__

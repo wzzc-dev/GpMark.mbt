@@ -178,4 +178,6 @@ input mode）判定，第三方输入法（搜狗、微信等）与系统拼音�
 - 仅 macOS arm64 本地验证；Linux x86_64 / Windows x64 由 GitHub Actions CI
   构建验证（能编译、能产出二进制），未做交互验证。非 macOS 上文件对话框
   降级为「取消」（osascript 仅 macOS），剪贴板 Windows 尽力而为、Linux 不可用
-  （见 adapter/*_stub.c）。
+  （见 adapter/*_stub.c）。Windows 要求 Win10 1703+（DirectWrite 文本系统依赖
+  IDWriteFactory5）；gpui-sys 在 Windows 上以 release 构建（debug 档的 gpui
+  启动时会去编译机源码头文件路径现编 shader，产物换机即挂）。

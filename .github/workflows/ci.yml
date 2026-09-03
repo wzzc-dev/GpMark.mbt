@@ -20,7 +20,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       # dev profile 的 rlib 体积近半是 debug 段（CI 不看行号），关掉省编译/链接与缓存体积。
       CARGO_PROFILE_DEV_DEBUG: 0
@@ -66,6 +66,16 @@ jobs:
       - name: Install XCB/XKB development libraries (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libc6-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+
+      # gpui release 构建的 build.rs 用 fxc.exe 预编译 shader 字节；它的自动发现
+      # 只认硬编码的 10.0.26100.0 SDK 路径，这里显式喂一个（GPUI_FXC_PATH 优先）。
+      - name: Export GPUI_FXC_PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          fxc="$(ls -1 "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/fxc.exe 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$fxc" ]; then echo "fxc.exe not found under Windows Kits\\10\\bin" >&2; exit 1; fi
+          echo "GPUI_FXC_PATH=$(cygpath -w "$fxc")" >> "$GITHUB_ENV"
 
       - name: Toolchain versions
         run: |

@@ -261,9 +261,14 @@ pub fn current_path() -> String {
 
 ///|
 fn home_dir() -> String {
+  // HOME 在 Windows 上通常不存在（仅 Git Bash 进程注入），回退 USERPROFILE。
   match @env.get_env_var("HOME") {
-    Some(h) => h
-    None => "~"
+    Some(h) if h != "" => h
+    _ =>
+      match @env.get_env_var("USERPROFILE") {
+        Some(h) if h != "" => h
+        _ => "~"
+      }
   }
 }
 

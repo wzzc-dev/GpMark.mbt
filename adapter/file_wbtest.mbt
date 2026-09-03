@@ -18,7 +18,8 @@ test "open_path 失败路径给出可读错误" {
 
 ///|
 test "open_path 读取替换文档；save_current_file 回写；tilde 展开" {
-  let path = "/tmp/mdmbt_open_wbtest.md"
+  // 临时文件放 home 下：/tmp 仅 POSIX，Windows runner 上写入会直接失败。
+  let path = home_dir() + "/mdmbt_open_wbtest.md"
   let ok = write_text(path, "# 打开的文件\n\n正文内容。\n")
   assert_true(ok)
   load(demo_sample())

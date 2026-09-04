@@ -201,6 +201,32 @@ test "光标移动与选区扩展" {
 }
 
 ///|
+test "代码块内上下键逐行移动（velotype 语义）" {
+  let bs = parse_doc("para\n```rust\nfn main() {\n  let x = 42;\n}\n```\ntail\n")
+  // 单元布局：0=para 1=代码块（3 硬行）2=tail
+  assert_eq(plain_doc(bs).length(), 3)
+  // 代码块 plain = "fn main() {\n  let x = 42;\n}"，行首偏移 0/12/26
+  // 块内 Down：保持列、钳到目标行长度
+  assert_eq(doc_move(bs, cs(1, 4), Down, false), cs(1, 16))
+  assert_eq(doc_move(bs, cs(1, 12), Down, false), cs(1, 26)) // 列 0 → 次行行首
+  assert_eq(doc_move(bs, cs(1, 16), Down, false), cs(1, 27)) // 列 4 钳到末行长度 1
+  // 末行 Down：出块到下一单元，列 = 行内列
+  assert_eq(doc_move(bs, cs(1, 27), Down, false), cs(2, 1))
+  // 首行 Up：出块到上一单元
+  assert_eq(doc_move(bs, cs(1, 4), Up, false), cs(0, 4))
+  assert_eq(doc_move(bs, cs(1, 0), Up, false), cs(0, 0))
+  // 从下方进入代码块：落末行，列钳到末行长度
+  assert_eq(doc_move(bs, cs(2, 1), Up, false), cs(1, 27))
+  // 从上方进入代码块：落首行
+  assert_eq(doc_move(bs, cs(0, 1), Down, false), cs(1, 1))
+  // 块内 Up：保持列
+  assert_eq(doc_move(bs, cs(1, 16), Up, false), cs(1, 4))
+  // 文档边界：首单元 Up / 末单元 Down 原地不动
+  assert_eq(doc_move(bs, cs(0, 1), Up, false), cs(0, 1))
+  assert_eq(doc_move(bs, cs(2, 1), Down, false), cs(2, 1))
+}
+
+///|
 test "块级类型转换" {
   let bs0 = parse_doc("text\n")
   let (h1, _) = doc_block_op(bs0, cs(0, 0), SetHeading(2))

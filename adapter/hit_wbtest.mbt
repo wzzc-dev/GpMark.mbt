@@ -204,3 +204,79 @@ test "渲染输出携带探针 key" {
   }
   assert_true(found)
 }
+
+///|
+/// 字节流里找 UTF-8 序列（负向断言用）。
+fn bytes_contain(bytes : Bytes, needle : Bytes) -> Bool {
+  let mut i = 0
+  while i + needle.length() <= bytes.length() {
+    let mut eq = true
+    let mut j = 0
+    while j < needle.length() {
+      if bytes[i + j] != needle[j] {
+        eq = false
+        j = needle.length()
+      } else {
+        j = j + 1
+      }
+    }
+    if eq {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+test "代码块：探针段按行注册，点击映到行/列" {
+  let us = hit_render("```rust\nfn main() {\n  let x = 42;\n}\n```\n")
+  assert_eq(us.length(), 1)
+  let ulen = us[0].plain.to_array().length()
+  assert_eq(ulen, 27) // "fn main() {\n  let x = 42;\n}"
+  // 每硬行一段（行首 0/12/26）+ 末位单元长哨兵
+  let starts = tok_starts_of(0)
+  assert_eq(starts, [0, 12, 26, 27])
+  // 行 2 段（ti=1，x=130..160）中点：span=14，线性插值 → 12+7=19
+  expect_hit(
+    caret_at_point(145, 60, 0, us.length(), us, fake_probe),
+    0,
+    19,
+    "代码行中点插值",
+  )
+  // 末行尾区（ti=3）：远右点击 → 单元尾
+  expect_hit(
+    caret_at_point(999999, 60, 0, us.length(), us, fake_probe),
+    0,
+    ulen,
+    "代码块尾区",
+  )
+  // 越左 → 行首
+  expect_hit(
+    caret_at_point(0, 60, 0, us.length(), us, fake_probe),
+    0,
+    0,
+    "代码块行左外",
+  )
+}
+
+///|
+test "代码块光标是 div 条而非字符（▏ 不进文本流）" {
+  // 光标劈行（offset=16 在行 1 中部）：左右两段 + 绝对定位光标条
+  let bs = @core.parse_doc("```rust\nfn main() {\n  let x = 42;\n}\n```\n")
+  let cb = @gpui.CommandBuffer::new()
+  cb.div()
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 16 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  // ▏ = U+258F = E2 96 8F（历史实现曾以字符段画光标，会把后面的字推走）
+  let glyph : Bytes = b"\xe2\x96\x8f"
+  assert_false(bytes_contain(cb.to_bytes(), glyph))
+  // 劈行后行 1 拆成两段：starts = [0, 12, 16, 26, 27]
+  assert_eq(tok_starts_of(0), [0, 12, 16, 26, 27])
+}

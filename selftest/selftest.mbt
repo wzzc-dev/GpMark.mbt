@@ -411,6 +411,63 @@ fn main {
     }
     let _ = @fs.remove_file(tmp) catch { _ => () }
   }
+  // --- 代码块：div 光标条进块、探针段按行注册、点击落单元尾 -------------
+  {
+    @mdmbt/adapter.load(
+      "code 前置\n```rust\nfn main() {\n  let x = 42;\n}\n```\n",
+    )
+    let us_code = @core.collect_units(ed.blocks)
+    let mut code_u = -1
+    for k = 0; k < us_code.length(); k = k + 1 {
+      if us_code[k].kind == @core.CodeU {
+        code_u = k
+      }
+    }
+    if code_u < 0 {
+      println("BAD: code unit not found")
+      failed.push(1)
+    } else {
+      // 光标进代码块行 1 中部 → 重建 → 无 ▏ 泄漏（div 条不进文本流）
+      ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit: code_u, offset: 16 }))
+      @nakake/gpui-bindings.expect_ok(
+        @mdmbt/adapter.build_tree(0),
+        "code caret build",
+      )
+      let d = dump0()
+      if d.contains("let x = 42") &&
+        d.to_array().filter(c => c == '▏').length() == 0 {
+        println("  ok: code caret renders without glyph leak")
+      } else {
+        println("BAD: code caret glyph leak or missing code text")
+        failed.push(1)
+      }
+      // 探针段按行注册：3 硬行 + 哨兵（= 单元长度）
+      let starts = @mdmbt/adapter.tok_starts_of(code_u)
+      let ulen = us_code[code_u].plain.to_array().length()
+      if starts.length() == 4 && starts[starts.length() - 1] == ulen {
+        println("  ok: code probe starts registered")
+      } else {
+        println("BAD: code probe starts \{starts} (ulen=\{ulen})")
+        failed.push(1)
+      }
+      // 点击代码块 → 光标落单元尾（精确落点由探针矩形在 paint 后给出，
+      // headless 只验兜底路径；行列映射契约见 hit_wbtest）
+      let _ = @mdmbt/adapter.dispatch(
+        @nakake/gpui-bindings.ABI_VERSION,
+        @nakake/gpui-bindings.EVENT_CLICK,
+        0,
+        @mdmbt/adapter.click_id_of(code_u),
+        0,
+      )
+      let f = ed.sel.focus
+      if f.unit == code_u && f.offset == ulen {
+        println("  ok: code click caret at unit end")
+      } else {
+        println("BAD: code click caret wrong: \{f.unit}@\{f.offset}")
+        failed.push(1)
+      }
+    }
+  }
   if failed.length() > 0 {
     println("---- dump ----")
     println(dump4)

@@ -450,9 +450,10 @@ pub fn probe_tail_key(unit : Int, ti : Int) -> String {
 }
 
 ///|
-/// 零宽光标：2px 光标条，按流挂在所属探针段之前（或两段之间）——段的
-/// 左缘正是光标位置（光标落在段首，或光标劈行后右段的段首）。它自己带
-/// 同款点击 handler，2px 条带上的点击不会落空。
+/// 零宽光标：绝对定位的 2px 光标条，挂在宿主 div（光标后侧探针段的段
+/// div，或行尾 tail zone）内左缘——脱离排版流，不占宽度、不推走后面的
+/// 字；top/bottom=0 使高度等于宿主行高（含行尾分支）。它自己带同款点击
+/// handler，2px 条带上的点击不会落空。要求调用时栈顶 div 就是宿主。
 /// 组词中时覆盖层是一行 `[组词文本][光标条]`：光标条顺排在下划线组词
 /// 文本之后（输入法的插入点在组词文本末尾）。
 /// 覆盖层 key="caret"：桥层据此捕获其窗口矩形，作为 IME 候选窗锚点。
@@ -465,6 +466,8 @@ fn caret_overlay(
 ) -> Unit {
   if preedit_text.val == "" {
     cb.div()
+    cb.set_position(@gpui.POSITION_ABSOLUTE)
+    cb.set_inset(0, -1, 0, 0)
     cb.set_min_size(2, -1)
     cb.set_bg_color(rgb(col_caret))
     cb.set_on_click(rtok(unit, ti))
@@ -472,6 +475,8 @@ fn caret_overlay(
     cb.add_child()
   } else {
     cb.div()
+    cb.set_position(@gpui.POSITION_ABSOLUTE)
+    cb.set_inset(0, -1, 0, 0)
     cb.set_flex_row()
     cb.set_on_click(rtok(unit, ti))
     cb.set_key("caret")
@@ -532,15 +537,17 @@ fn render_part(
   rtok : (Int, Int) -> Int,
   size : Float,
 ) -> Int {
-  if caret_before {
-    caret_overlay(cb, unit, si, rtok, size)
-  }
   starts.push(s)
   cb.div()
   cb.set_cursor(@gpui.CURSOR_TEXT)
   cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
   cb.set_on_click(rtok(unit, si))
   cb.set_key(probe_part_key(unit, si))
+  if caret_before {
+    // 光标条挂在段 div 内左缘（绝对定位）：段的左缘 = 光标 x。必须是段
+    // div 的子节点而不是 row 的流内兄弟，否则 2px 条带会把后面的字推右。
+    caret_overlay(cb, unit, si, rtok, size)
+  }
   cb.rich_text(
     token_segs(chars, styles, s, e),
     col_text.0,
@@ -597,8 +604,8 @@ fn push_text(
   // run）。gpui 每个文本节点有 ≈几十微秒的固定开销（shaping/element 构造/
   // paint，测量见 fw 分解），逐 token 建节点会让每帧成本随 token 数线性增
   // 长；按行合并后节点数 = 行数 + 光标劈行的一个额外段。光标落在行内部时
-  // 该行劈成左右两段，2px 光标条按流挂在两段之间——右段的左缘就是光标
-  // 位置（不插字符、不推文字）。探针段表 starts 语义不变：各段起点 + 末位
+  // 该行劈成左右两段，2px 光标条绝对定位挂在右段段 div 内左缘——脱离排
+  // 版流，不占宽度、不推文字。探针段表 starts 语义不变：各段起点 + 末位
   // 单元长哨兵，hit/click 契约不受影响。
   let starts : Array[Int] = []
   let mut si = 0 // 探针段下标（tail_zone 的哨兵下标 = 段数）
@@ -1065,7 +1072,7 @@ fn render_block(
         cb.text(lang, col_muted.0, col_muted.1, col_muted.2, 11.0)
         cb.add_child()
       }
-      render_code(cb, code, caret, lo, hi)
+      render_code(cb, cur, rtok, code, caret, lo, hi)
     }
     @core.Quote(inner) => {
       cb.set_bg_color(@gpui.Color::rgb(36, 39, 48))
@@ -1249,8 +1256,10 @@ fn render_block(
 ///|
 fn render_code(
   cb : @gpui.CommandBuffer,
+  unit : Int,
+  rtok : (Int, Int) -> Int,
   code : String,
-  caret : Int,
+  caret0 : Int,
   lo : Int,
   hi : Int,
 ) -> Unit {
@@ -1260,34 +1269,111 @@ fn render_code(
   cb.set_flex_col()
   cb.set_font_family("ui-monospace")
   cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
+  let code_chars = code.to_array()
+  let clen = code_chars.length()
+  // 尾部换行的块：'\n' 占一个偏移位但 split_lines_str 会剥掉它，最后一行
+  // 的行窗盖不到 unit 末偏移——把落在末行行尾之后的光标（End/尾区点击）
+  // 钳回行尾，否则无行窗可画、光标消失。
+  let caret = if caret0 >= clen && clen > 0 && code_chars[clen - 1] == '\n' {
+    clen - 1
+  } else if caret0 > clen {
+    clen
+  } else {
+    caret0
+  }
   let lines = @core.split_lines_str(code)
-  let mut line_start = 0
   if lines.length() == 0 {
+    remember_starts(unit, [0])
     cb.set_min_size(0, 22)
     return
   }
+  let base = Some(@gpui.RunStyle::new(color=rgb(col_code)))
+  let size : Float = 13.5
+  // 探针段与段落行同契约（hit.mbt 据此把点击映为行/列）：每行一段，
+  // 光标劈行时两段；末行尾区 = 单元尾。等宽字体下行内线性插值即字符列。
+  let starts : Array[Int] = []
+  let mut si = 0
+  let mut line_start = 0
+  let nrows = lines.length()
+  let mut ri = 0
   for line in lines {
-    let len = line.to_array().length()
+    let chars = line.to_array()
+    let len = chars.length()
     let (lc, ll, lh) = line_window(caret, lo, hi, line_start, len)
-    let st = [lc, ll, lh, 0, 0]
-    let segs : Array[Seg] = []
-    emit_text(
-      segs,
-      if line == "" {
-        " "
-      } else {
-        line
-      },
-      st,
-      Some(@gpui.RunStyle::new(color=rgb(col_code))),
-    )
-    if st[3] == 0 && lc >= 0 {
-      segs.push(caret_seg())
+    cb.div()
+    cb.set_flex_row()
+    if 0 < lc && lc < len {
+      starts.push(line_start)
+      si = code_part(
+        cb, chars, base, ll, lh, 0, lc, false, unit, si, rtok, size,
+      )
+      starts.push(line_start + lc)
+      si = code_part(
+        cb, chars, base, ll, lh, lc, len, true, unit, si, rtok, size,
+      )
+    } else {
+      starts.push(line_start)
+      si = code_part(
+        cb, chars, base, ll, lh, 0, len, lc == 0, unit, si, rtok, size,
+      )
     }
-    cb.rich_text(segs, col_text.0, col_text.1, col_text.2, 13.5)
-    cb.add_child()
+    if ri == nrows - 1 {
+      // 末行行尾空白区：点击 = 单元尾；光标在单元尾时这里挂光标条
+      tail_zone(cb, unit, si, rtok, lc == len, size)
+    } else if lc == len {
+      // 非末行的行尾光标：纯视觉尾区（不进探针表），挂光标条
+      cb.div()
+      cb.set_flex(1.0, 0.0, 0.0)
+      caret_overlay(cb, unit, si, rtok, size)
+      cb.add_child()
+    }
+    cb.add_child() // row → code 容器
     line_start = line_start + len + 1
+    ri = ri + 1
   }
+  starts.push(clen) // 末位哨兵 = 单元长度（行尾空白区的虚拟段起点）
+  remember_starts(unit, starts)
+}
+
+///|
+/// 代码行的一个渲染段 [s, e)（行内相对偏移）：带探针 key 与点击
+/// handler（点击粗定位兜底，精确落点走 hit.mbt 的探针矩形）。可选前置
+/// 光标条（caret_overlay 绝对定位挂段 div 内左缘，调用时栈顶必须是本
+/// 段 div）。空段渲染 " " 占位保行高。选区窗口 [ll, lh) 透传 emit_text
+/// 按字符取交集。
+fn code_part(
+  cb : @gpui.CommandBuffer,
+  chars : Array[Char],
+  base : @gpui.RunStyle?,
+  ll : Int,
+  lh : Int,
+  s : Int,
+  e : Int,
+  caret_before : Bool,
+  unit : Int,
+  si : Int,
+  rtok : (Int, Int) -> Int,
+  size : Float,
+) -> Int {
+  cb.div()
+  cb.set_cursor(@gpui.CURSOR_TEXT)
+  cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
+  cb.set_on_click(rtok(unit, si))
+  cb.set_key(probe_part_key(unit, si))
+  if caret_before {
+    caret_overlay(cb, unit, si, rtok, size)
+  }
+  let segs : Array[Seg] = []
+  let text = if e > s {
+    String::from_array(chars[s:e])
+  } else {
+    " "
+  }
+  emit_text(segs, text, [-1, ll, lh, 0, s], base)
+  cb.rich_text(segs, col_text.0, col_text.1, col_text.2, size)
+  cb.add_child() // rich_text → 段 div
+  cb.add_child() // 段 div → row
+  si + 1
 }
 
 // 全局字符范围映射到行内范围

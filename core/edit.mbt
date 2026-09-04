@@ -434,16 +434,14 @@ pub fn doc_move(
         base
       }
     Up =>
-      if cu > 0 {
-        Caret::{ unit: cu - 1, offset: co.min(unit_plain_len(blocks, cu - 1)) }
-      } else {
-        base
+      match vertical_step(blocks, cu, co, -1, n) {
+        Some(np) => np
+        None => base
       }
     Down =>
-      if cu + 1 < n {
-        Caret::{ unit: cu + 1, offset: co.min(unit_plain_len(blocks, cu + 1)) }
-      } else {
-        base
+      match vertical_step(blocks, cu, co, 1, n) {
+        Some(np) => np
+        None => base
       }
     Home => Caret::{ unit: cu, offset: 0 }
     End => Caret::{ unit: cu, offset: len }
@@ -452,6 +450,86 @@ pub fn doc_move(
     { anchor: sel.anchor, focus: np }
   } else {
     collapsed_sel(np)
+  }
+}
+
+///|
+/// 硬行表：(行起始偏移, 行字符数)。'\n' 占一个偏移位、归上一行之后，
+/// 与渲染层 line_window 的 line_start 累计口径一致。
+fn hard_lines(text : String) -> Array[(Int, Int)] {
+  let cs = text.to_array()
+  let out : Array[(Int, Int)] = []
+  let mut start = 0
+  for i = 0; i < cs.length(); i = i + 1 {
+    if cs[i] == '\n' {
+      out.push((start, i - start))
+      start = i + 1
+    }
+  }
+  out.push((start, cs.length() - start))
+  out
+}
+
+///|
+/// 偏移所属硬行下标（行尾含，即落在 '\n' 位归本行；越过末行行尾归末行）。
+fn line_of(lines : Array[(Int, Int)], co : Int) -> Int {
+  let last = lines.length() - 1
+  for k = 0; k < last; k = k + 1 {
+    let (s, l) = lines[k]
+    if co <= s + l {
+      return k
+    }
+  }
+  last
+}
+
+///|
+/// 上下移动一步（对齐 velotype 的块内逐行导航）：多行单元（代码块）内
+/// 按硬行逐行移动并保持列，列钳到目标行长度；出块/进块同样钳列——从
+/// 上方进入多行块落其首行、从下方进入落其末行。单行单元之间列直接钳到
+/// 目标单元长度，与既有行为一致。返回 None 表示已到文档边界（原位不动）。
+fn vertical_step(
+  blocks : Array[Block],
+  cu : Int,
+  co : Int,
+  dir : Int,
+  n : Int,
+) -> Caret? {
+  let cur = match unit_ref_at(blocks, cu) {
+    Some((_, _, r)) => r
+    None => return None
+  }
+  let lines = hard_lines(cur.plain)
+  let col = if lines.length() > 1 {
+    let li = line_of(lines, co)
+    let (ls, ll) = lines[li]
+    if dir < 0 && li > 0 {
+      let (tls, tll) = lines[li - 1]
+      return Some(Caret::{ unit: cu, offset: tls + (co - ls).min(tll) })
+    }
+    if dir > 0 && li < lines.length() - 1 {
+      let (tls, tll) = lines[li + 1]
+      return Some(Caret::{ unit: cu, offset: tls + (co - ls).min(tll) })
+    }
+    co - ls
+  } else {
+    co
+  }
+  let tu = cu + dir
+  if tu < 0 || tu >= n {
+    return None
+  }
+  match unit_ref_at(blocks, tu) {
+    Some((_, _, t)) => {
+      let tlines = hard_lines(t.plain)
+      let (tls, tll) = if dir < 0 {
+        tlines[tlines.length() - 1]
+      } else {
+        tlines[0]
+      }
+      Some(Caret::{ unit: tu, offset: tls + col.min(tll) })
+    }
+    None => None
   }
 }
 

@@ -53,6 +53,15 @@ Enter/Backspace 自定义拦截（widget 会吞掉这些键，见 lib.rs
   记下 `swallow_gen=key_gen`；`on_text` 仅当 `swallow_gen==key_gen` 时吞掉
   该条 text 事件（`adapter/app.mbt:on_key/on_text`）。一次性布尔标志曾会
   误吞后续普通键入，代际计数保证“只吞当次快捷键补发的那一条”。
+- **已解（Windows，gpui-sys 侧）**：Windows 上这个双投递不是「快捷键杂散
+  补发」而是**所有可打印键常态双发**——每个未消费的 WM_KEYDOWN 都会被
+  平台后端 `TranslateMessage` 成 WM_CHAR，`handle_char_msg` 把它投给焦点
+  `ImeBridge::replace_text_in_range`（→ `EVENT_TEXT`），keydown 路径再发
+  一次 `typed_text` 即字母/数字各进两条（与缺口 13a mac 第三方输入法的
+  「双发」同症状，mac 靠输入源判定门控，Windows 则无条件发生）。
+  gpui-sys 现按平台门控：普通键的文本只走 WM_CHAR（Windows 权威文本通道，
+  layout/死键感知、控制字符过滤）；Alt/AltGr 组合走 WM_SYSKEYDOWN、不产生
+  char 消息，其 keydown 文本保留。mac 的 Cmd 组合仍靠代际计数绕行。
 
 ## 4. 无文本换行度量接口
 
@@ -117,12 +126,19 @@ widget，见缺口 2）。库包又不能加 `cc-link-flags`（会令 moon 误�
 
 - **影响**：拿不到「浏览…」对话框选中的路径，也不能把文件拖进窗口。
 - **绕行**（`adapter/filedialog_stub.c` + `adapter/app.mbt` + `main/main.mbt`）：
-  1. `Cmd+O`（顶栏 Open 按钮同款）经 `filedialog_stub.c`（native-stub）跑
-     `osascript -e 'choose file'` 弹出**真正的系统文件选择框**（即
-     NSOpenPanel，由独立 osascript 进程承载），选中后 `open_path` 读入并关联；
+  1. `Cmd+O`（顶栏 Open 按钮同款；Windows 上快捷键修饰为 Ctrl，见下）经
+     `filedialog_stub.c`（native-stub）**子进程成桥**弹出真正的系统文件
+     选择框：macOS 跑 `osascript -e 'choose file'`（NSOpenPanel，由独立
+     osascript 进程承载）；Windows 跑 `powershell -Command` 的
+     `System.Windows.Forms.OpenFileDialog/SaveFileDialog`（Win32 通用
+     对话框；脚本纯 ASCII——cmd 按 OEM 代码页解析命令行；stdout 强制
+     UTF-8 供上层 `@utf8` 解码；MSVC CRT 只有 `_popen/_pclose`）。选中后
+     `open_path` 读入并关联；
      `Cmd+S`（顶栏 Save 按钮同款）规范导出回写关联文件，未关联文档弹
-     `choose file name` 系统保存框选定目的地。弹出期间本进程同步阻塞在
-     popen 上，等价模态；取消/出错返回空即无操作。
+     系统保存框（Windows 默认名 Untitled.md + .md 过滤）选定目的地。
+     弹出期间本进程同步阻塞在 popen 上，等价模态；取消/出错返回空即无操作。
+     Windows 上 gpui 把 platform 修饰映射到 Win 键（几乎传不进应用），
+     因此 adapter 的快捷键判定在 win32 额外接受 Ctrl（`cmd_mask`）。
   2. `open dist/MdMbt.app --args <path>` 按文件启动（Finder「打开方式」
      的命令行形态），失败回退内置 demo。
   3. 剪贴板已绕开本缺口：`adapter/clipboard_stub.c`（native-stub）经

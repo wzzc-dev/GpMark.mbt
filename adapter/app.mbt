@@ -631,6 +631,24 @@ let key_gen : Array[Int] = [0]
 let swallow_gen : Array[Int] = [-1]
 
 ///|
+/// 「快捷键修饰键」位掩码：macOS 是 Cmd（MOD_PLATFORM）。Windows 上
+/// gpui 把 platform 映射到 Win 键（被系统全局钩子占用，几乎传不进应用），
+/// 惯例的快捷键修饰是 Ctrl，故 win32 额外接受 MOD_CTRL。判定用 OS 环境
+/// 变量（与 home_dir 回退 USERPROFILE 同一手法；本地 moonbit core 无
+/// os.target）。macOS/Linux 上 Ctrl 组合保持原义（不触发快捷键）。
+fn cmd_mask() -> Int {
+  let on_windows = match @env.get_env_var("OS") {
+    Some(v) => v == "Windows_NT"
+    None => false
+  }
+  if on_windows {
+    @gpui.MOD_PLATFORM | @gpui.MOD_CTRL
+  } else {
+    @gpui.MOD_PLATFORM
+  }
+}
+
+///|
 fn bump_key_gen(mods : Int) -> Unit {
   key_gen[0] = key_gen[0] + 1
   if (mods & (@gpui.MOD_PLATFORM | @gpui.MOD_CTRL | @gpui.MOD_ALT)) != 0 {
@@ -730,7 +748,7 @@ fn set_mark(self_bold : Bool, it_italic : Bool, st : Bool, cd : Bool) -> Unit {
 ///|
 fn on_key(code : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
-  if (mods & @gpui.MOD_PLATFORM) != 0 {
+  if (mods & cmd_mask()) != 0 {
     if code_hit(code, 'o') || code_hit(code, 'O') {
       // 弹系统文件选择框（osascript NSOpenPanel），弹出期间本进程阻塞
       open_via_dialog()
@@ -800,7 +818,7 @@ fn on_key(code : Int, mods : Int) -> Unit {
 fn on_named_key(id : Int, mods : Int) -> Unit {
   bump_key_gen(mods)
   let ext = (mods & @gpui.MOD_SHIFT) != 0
-  let cmd = (mods & @gpui.MOD_PLATFORM) != 0
+  let cmd = (mods & cmd_mask()) != 0
   let alt = (mods & @gpui.MOD_ALT) != 0
   if id == @gpui.KEY_ENTER && cmd {
     // Cmd+Enter：从代码块出逃（velotype 语义）

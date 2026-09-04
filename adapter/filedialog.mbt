@@ -1,9 +1,10 @@
-/// 系统文件选择框：经 adapter/filedialog_stub.c（native-stub）驱动
-/// /usr/bin/osascript 的 AppleScript `choose file` / `choose file name`——
-/// 即系统 NSOpenPanel / NSSavePanel，以独立 osascript 进程承载（与
-/// clipboard_stub.c 的 pbcopy/pbpaste 同一「绕开框架、子进程成桥」形态；
-/// 库包不能加 cc-link-flags，直接链 AppKit 会连累测试可执行文件）。
-/// 弹出期间本进程同步阻塞在 popen 上，等价模态；取消/出错返回 None。
+/// 系统文件选择框：经 adapter/filedialog_stub.c（native-stub）驱动子进程
+/// 弹出系统对话框——macOS 用 /usr/bin/osascript 的 AppleScript
+/// `choose file` / `choose file name`（即系统 NSOpenPanel / NSSavePanel），
+/// Windows 用 powershell.exe 的 System.Windows.Forms 通用对话框；
+/// 与 clipboard_stub.c 的 pbcopy/pbpaste 同一「绕开框架、子进程成桥」形态
+/// （库包不能加 cc-link-flags，直接链 AppKit 会连累测试可执行文件）。
+/// 弹出期间本进程同步阻塞在管道读上，等价模态；取消/出错返回 None。
 
 ///|
 #borrow(buf)

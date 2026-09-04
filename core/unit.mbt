@@ -106,6 +106,62 @@ pub fn unit_at(bs : Array[Block], u : Int) -> UnitRef? {
 }
 
 ///|
+/// 轻量单元定位：不摊平全文。先按 count_units_of 前缀累计找到包含单元 u
+/// 的顶层块，再只展开该块，返回 (顶层下标, 块内单元序号, 单元)。补丁闭包
+/// 以「把该块的新块序列拼回原数组」为重建上下文，与 collect_units 全量
+/// 结果里同一单元的闭包产出完全一致的新文档。越界返回 None。
+pub fn unit_ref_at(bs : Array[Block], u : Int) -> (Int, Int, UnitRef)? {
+  if u < 0 {
+    return None
+  }
+  let n = bs.length()
+  let mut top = 0
+  let mut prefix = 0
+  while top < n {
+    let c = count_units_of(bs[top])
+    if u < prefix + c {
+      break
+    }
+    prefix = prefix + c
+    top = top + 1
+  }
+  if top >= n {
+    return None
+  }
+  let t = top
+  let splice : Rebuild = fn(inner) {
+    let out : Array[Block] = []
+    for k = 0; k < n; k = k + 1 {
+      if k == t {
+        for x in inner {
+          out.push(x)
+        }
+      } else {
+        out.push(bs[k])
+      }
+    }
+    out
+  }
+  let acc : Array[UnitRef] = []
+  collect_list([bs[t]], splice, t, acc)
+  let idx = u - prefix
+  if idx < 0 || idx >= acc.length() {
+    None
+  } else {
+    Some((t, idx, acc[idx]))
+  }
+}
+
+///|
+/// 单元纯文本的字符数（越界 0）；只展开目标单元所在顶层块。
+pub fn unit_plain_len(bs : Array[Block], u : Int) -> Int {
+  match unit_ref_at(bs, u) {
+    Some((_, _, r)) => r.plain.to_array().length()
+    None => 0
+  }
+}
+
+///|
 fn push_unit(
   acc : Array[UnitRef],
   kind : UnitKind,

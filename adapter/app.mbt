@@ -18,8 +18,16 @@ let rev : @gpui.Signal[Int] = store.signal(rev_cell)
 pub let ed : @core.Editor = @core.Editor::new([@core.Paragraph([])])
 
 ///|
+/// 内容变更信号：作废高度缓存并触发重建。
 fn bump() -> Unit {
   cache_valid.val = false
+  rev.set(store, rev.get(store) + 1)
+}
+
+///|
+/// 纯选区/视图信号（光标、选区、组词预览、滚动窗口移动）：只触发重建。
+/// 块数组没变，高度前缀和缓存保持有效，重建直接复用。
+fn bump_sel() -> Unit {
   rev.set(store, rev.get(store) + 1)
 }
 
@@ -50,8 +58,10 @@ let win_lo : Ref[Int] = { val: 0 }
 ///|
 let win_hi : Ref[Int] = { val: 0 }
 
-// 高度/单元前缀和缓存（长度 n+1）。只在文档版本 bump 后重算；纯滚动重建
-// 直接复用，避免每次滚动都对全文重新 tokenize 估高。
+// 高度/单元前缀和缓存（长度 n+1）。只在文档版本 bump 后更新；纯滚动/选区
+// 重建（bump_sel）直接复用。bump 后的更新走块级内容指纹：指纹没变的块
+// 复用上次估高（典型键入只有 1 个块变化），块数变化时全量对齐重算——
+// 指纹本身 O(结构节点数)，全文一遍也只读结构不读文本。
 
 ///|
 let cache_valid : Ref[Bool] = { val: false }
@@ -62,34 +72,78 @@ let cache_cum : Ref[Array[Float]] = { val: [] }
 ///|
 let cache_units : Ref[Array[Int]] = { val: [] }
 
+// 逐块估高 / 单元数 / 内容指纹（与 blocks 等长，随每次缓存更新重建）。
+///|
+let cache_heights : Ref[Array[Float]] = { val: [] }
+
+///|
+let cache_block_units : Ref[Array[Int]] = { val: [] }
+
+///|
+let cache_fp : Ref[Array[UInt64]] = { val: [] }
+
 ///|
 fn ensure_height_cache() -> Unit {
   let blocks = ed.blocks
-  if cache_valid.val && cache_cum.val.length() == blocks.length() + 1 {
+  let n = blocks.length()
+  if cache_valid.val && cache_cum.val.length() == n + 1 {
     return
   }
-  let cum : Array[Float] = [0.0]
-  let units : Array[Int] = [0]
+  // 块数不变时全部数组原地改写：每键零分配（指纹数组若每次新建，
+  // 5 份 n 长数组/键的分配压力会在 stress 文档上诱发 GC 尖峰）。
+  let reuse =
+    cache_fp.val.length() == n &&
+    cache_heights.val.length() == n &&
+    cache_block_units.val.length() == n &&
+    cache_cum.val.length() == n + 1 &&
+    cache_units.val.length() == n + 1
+  let cum : Array[Float] = if reuse { cache_cum.val } else { [0.0] }
+  let units : Array[Int] = if reuse { cache_units.val } else { [0] }
+  let heights : Array[Float] = if reuse { cache_heights.val } else { [] }
+  let block_units : Array[Int] =
+    if reuse { cache_block_units.val } else { [] }
+  let fps : Array[UInt64] = if reuse { cache_fp.val } else { [] }
   let mut h : Float = 0.0
   let mut u = 0
-  for i = 0; i < blocks.length(); i = i + 1 {
+  for i = 0; i < n; i = i + 1 {
     let b = blocks[i]
     // 滚动容器 set_gap(6.0)：块间间隙计入滚动行程。
     if i > 0 {
       h = h + 6.0
     }
-    h = h + estimate_slot_height(b, base_avail)
-    u = u + count_units_of(b)
-    cum.push(h)
-    units.push(u)
+    let f = block_fingerprint(b)
+    let (bh, bu) = if reuse && fps[i] == f {
+      (heights[i], block_units[i])
+    } else {
+      (estimate_slot_height(b, base_avail), count_units_of(b))
+    }
+    h = h + bh
+    u = u + bu
+    if reuse {
+      cum[i + 1] = h
+      units[i + 1] = u
+      heights[i] = bh
+      block_units[i] = bu
+      fps[i] = f
+    } else {
+      cum.push(h)
+      units.push(u)
+      heights.push(bh)
+      block_units.push(bu)
+      fps.push(f)
+    }
   }
   cache_cum.val = cum
   cache_units.val = units
+  cache_heights.val = heights
+  cache_block_units.val = block_units
+  cache_fp.val = fps
   cache_valid.val = true
 }
 
 ///|
 /// 可视块区间 [lo, hi)：cum 前缀和与 scroll_y ± viewport ± overscan 相交。
+/// cum 随块高严格递增，两端各做一次二分代替线性扫描。
 fn compute_window(y : Float) -> (Int, Int) {
   let n = ed.blocks.length()
   let cum = cache_cum.val
@@ -98,15 +152,30 @@ fn compute_window(y : Float) -> (Int, Int) {
   }
   let top = y - WINDOW_PAD
   let bottom = y + viewport_h.val + WINDOW_PAD
-  let mut lo = 0
-  while lo < n && cum[lo + 1] <= top {
-    lo = lo + 1
+  // 首个「底边越过窗口顶」的块：cum[lo+1] > top
+  let mut a = 0
+  let mut b = n
+  while a < b {
+    let m = (a + b) / 2
+    if cum[m + 1] > top {
+      b = m
+    } else {
+      a = m + 1
+    }
   }
-  let mut hi = lo
-  while hi < n && cum[hi] < bottom {
-    hi = hi + 1
+  let lo = a
+  // 首个「顶边到达窗口底以下」的块：cum[hi] >= bottom
+  let mut c = lo
+  let mut d = n
+  while c < d {
+    let m = (c + d) / 2
+    if cum[m] >= bottom {
+      d = m
+    } else {
+      c = m + 1
+    }
   }
-  (lo, hi)
+  (lo, c)
 }
 
 ///|
@@ -159,7 +228,7 @@ fn on_preedit(payload : Bytes) -> Unit {
     } else {
       ""
     }
-    bump()
+    bump_sel()
   }
 }
 
@@ -215,7 +284,7 @@ fn on_mouse(phase : Int, x : Int, y : Int) -> Unit {
     match anchor {
       Some(c) => {
         ed.set_sel(@core.collapsed_sel(c))
-        bump()
+        bump_sel()
       }
       None => ()
     }
@@ -229,7 +298,7 @@ fn on_mouse(phase : Int, x : Int, y : Int) -> Unit {
             }
             ed.set_sel(@core.Sel::{ anchor: a, focus: c })
             drag_moved.val = true
-            bump()
+            bump_sel()
           }
           None => ()
         }
@@ -579,7 +648,7 @@ fn on_token_click(unit : Int, ti : Int) -> Unit {
     starts[starts.length() - 1]
   }
   ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit, offset: off }))
-  bump()
+  bump_sel()
 }
 
 ///|
@@ -594,7 +663,7 @@ fn on_unit_click(unit : Int) -> Unit {
   }
   let off = us[unit].plain.to_array().length()
   ed.set_sel(@core.collapsed_sel(@core.Caret::{ unit, offset: off }))
-  bump()
+  bump_sel()
 }
 
 ///|
@@ -762,7 +831,7 @@ fn on_key(code : Int, mods : Int) -> Unit {
       if text != "" {
         clipboard_write(text)
       }
-      bump()
+      bump_sel()
     } else if code_hit(code, 'x') || code_hit(code, 'X') {
       // 剪切：复制 + 删除选区（空选区无操作）
       let text = @core.doc_selection_text(ed.blocks, ed.sel)
@@ -790,7 +859,7 @@ fn on_key(code : Int, mods : Int) -> Unit {
       bump()
     } else if code_hit(code, 'a') || code_hit(code, 'A') {
       ed.set_sel(@core.doc_select_all(ed.blocks))
-      bump()
+      bump_sel()
     } else if code_hit(code, 'b') || code_hit(code, 'B') {
       set_mark(true, false, false, false)
     } else if code_hit(code, 'i') || code_hit(code, 'I') {
@@ -849,7 +918,7 @@ fn on_named_key(id : Int, mods : Int) -> Unit {
   } else if alt && (id == @gpui.KEY_LEFT || id == @gpui.KEY_RIGHT) {
     let d = if id == @gpui.KEY_LEFT { @core.Left } else { @core.Right }
     ed.set_sel(@core.doc_move_word(ed.blocks, ed.sel, d, ext))
-    bump()
+    bump_sel()
   } else {
     let dir = if id == @gpui.KEY_LEFT {
       Some(@core.Left)
@@ -869,7 +938,7 @@ fn on_named_key(id : Int, mods : Int) -> Unit {
     match dir {
       Some(d) => {
         ed.set_sel(@core.doc_move(ed.blocks, ed.sel, d, ext))
-        bump()
+        bump_sel()
       }
       None => ()
     }
@@ -895,7 +964,7 @@ let scroll_handle : @gpui.ScrollId = {
         if cache_valid.val {
           let (lo, hi) = compute_window(next)
           if lo != win_lo.val || hi != win_hi.val {
-            bump()
+            bump_sel()
           }
         }
       }

@@ -106,12 +106,11 @@ pub fn doc_apply_space_rule(
   if !sel.collapsed() {
     return noop
   }
-  let us = collect_units(blocks)
   let c = sel.focus
-  if c.unit < 0 || c.unit >= us.length() {
-    return noop
+  let u = match unit_ref_at(blocks, c.unit) {
+    Some((_, _, u)) => u
+    None => return noop
   }
-  let u = us[c.unit]
   let top = u.top_index
   if top < 0 || top >= blocks.length() {
     return noop

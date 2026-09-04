@@ -62,11 +62,10 @@ pub fn doc_insert(
     let (bs2, c2) = doc_delete(blocks, sel)
     return doc_insert(bs2, collapsed_sel(c2), text)
   }
-  let us = collect_units(blocks)
-  if a.unit < 0 || a.unit >= us.length() {
-    return (blocks, sel)
+  let u = match unit_ref_at(blocks, a.unit) {
+    Some((_, _, u)) => u
+    None => return (blocks, sel)
   }
-  let u = us[a.unit]
   let bs = if u.kind == CodeU {
     (u.set_plain)(str_replace_range(u.plain, a.offset, b.offset, text))
   } else {
@@ -407,21 +406,22 @@ pub fn doc_move(
   dir : Dir,
   doc_move_extend : Bool,
 ) -> Sel {
-  let us = collect_units(blocks)
+  // 方向键高频路径：只做 O(块数) 的零分配计数与目标单元的轻量展开，
+  // 不再每次全文 collect_units（键一次分配一整个 UnitRef 数组）。
+  let n = total_units(blocks)
   let base = if doc_move_extend { sel.focus } else { sel_start(sel) }
-  let n = us.length()
   if n == 0 {
     return sel
   }
   let cu = if base.unit >= n { n - 1 } else { base.unit }
-  let len = char_len(us[cu].plain)
+  let len = unit_plain_len(blocks, cu)
   let co = if base.offset > len { len } else { base.offset }
   let np = match dir {
     Left =>
       if co > 0 {
         Caret::{ unit: cu, offset: co - 1 }
       } else if cu > 0 {
-        Caret::{ unit: cu - 1, offset: char_len(us[cu - 1].plain) }
+        Caret::{ unit: cu - 1, offset: unit_plain_len(blocks, cu - 1) }
       } else {
         base
       }
@@ -435,13 +435,13 @@ pub fn doc_move(
       }
     Up =>
       if cu > 0 {
-        Caret::{ unit: cu - 1, offset: co.min(char_len(us[cu - 1].plain)) }
+        Caret::{ unit: cu - 1, offset: co.min(unit_plain_len(blocks, cu - 1)) }
       } else {
         base
       }
     Down =>
       if cu + 1 < n {
-        Caret::{ unit: cu + 1, offset: co.min(char_len(us[cu + 1].plain)) }
+        Caret::{ unit: cu + 1, offset: co.min(unit_plain_len(blocks, cu + 1)) }
       } else {
         base
       }
@@ -458,10 +458,9 @@ pub fn doc_move(
 ///|
 /// 全选。
 pub fn doc_select_all(blocks : Array[Block]) -> Sel {
-  let us = collect_units(blocks)
-  let n = us.length()
+  let n = total_units(blocks)
   let last = if n > 0 { n - 1 } else { 0 }
-  let end_off = if n > 0 { char_len(us[last].plain) } else { 0 }
+  let end_off = if n > 0 { unit_plain_len(blocks, last) } else { 0 }
   {
     anchor: Caret::{ unit: 0, offset: 0 },
     focus: Caret::{ unit: last, offset: end_off },

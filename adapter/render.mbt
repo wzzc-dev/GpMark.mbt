@@ -772,6 +772,102 @@ pub fn estimate_slot_height(b : @core.Block, avail : Float) -> Float {
 }
 
 ///|
+// FNV-1a 混合常量：块内容指纹只回答「估高结果还能不能复用」，不是
+// 密码学哈希——极罕见的「字节数不变的等长替换」若得到同指纹，只是让
+// spacer 多复用一次旧估算高，与估算本身 ±10% 的既容误差同级。
+const FP_OFFSET : UInt64 = 0xcbf29ce484222325UL
+const FP_PRIME : UInt64 = 0x100000001b3UL
+
+///|
+fn fp_mix(h : UInt64, v : UInt64) -> UInt64 { (h ^ v) * FP_PRIME }
+
+///|
+fn fp_int(v : Int) -> UInt64 { v.to_uint64() }
+
+///|
+fn fp_inline(h : UInt64, n : @core.Inline) -> UInt64 {
+  match n {
+    @core.Run(s, _) => fp_mix(h, fp_int(s.length()))
+    @core.Link(url, inner) => {
+      let mut hh = fp_mix(h, fp_int(url.length() + 7))
+      for x in inner {
+        hh = fp_inline(hh, x)
+      }
+      hh
+    }
+    @core.Image(alt, url) =>
+      fp_mix(fp_mix(h, fp_int(alt.length() + 3)), fp_int(url.length()))
+    @core.Footnote(nm) => fp_mix(h, fp_int(nm.length() + 11))
+  }
+}
+
+///|
+fn fp_inlines(h : UInt64, ns : Array[@core.Inline]) -> UInt64 {
+  let mut hh = fp_mix(h, fp_int(ns.length()))
+  for n in ns {
+    hh = fp_inline(hh, n)
+  }
+  hh
+}
+
+///|
+/// 块内容指纹：O(结构节点数)，不遍历文本字节。run 字节数、run 数、块型、
+/// 结构计数与代码字节数全部参与混合；样式（加粗等）不参与——估高只看
+/// 纯文本宽度模型，marks 变化不改行高。
+pub fn block_fingerprint(b : @core.Block) -> UInt64 {
+  let h0 = FP_OFFSET
+  match b {
+    @core.Heading(l, inls) => fp_inlines(fp_mix(h0, fp_int(1 + l)), inls)
+    @core.Paragraph(inls) => fp_inlines(fp_mix(h0, 2UL), inls)
+    @core.CodeBlock(lang, code) => {
+      let h = fp_mix(fp_mix(h0, 3UL), fp_int(lang.length()))
+      fp_mix(h, fp_int(code.length()))
+    }
+    @core.Quote(inner) => {
+      let mut h = fp_mix(h0, fp_int(4000 + inner.length()))
+      for ib in inner {
+        h = fp_mix(h, block_fingerprint(ib))
+      }
+      h
+    }
+    @core.ListBlock(kind, items) => {
+      let mut h =
+        fp_mix(h0, fp_int(5000 + 100 * items.length() + kind_start(kind)))
+      for it in items {
+        h = fp_inlines(fp_mix(h, 5UL), it.content)
+        for ch in it.children {
+          h = fp_mix(h, block_fingerprint(ch))
+        }
+      }
+      h
+    }
+    @core.TableBlock(t) => {
+      let mut h = fp_mix(h0, fp_int(6000 + t.rows.length()))
+      for row in t.rows {
+        h = fp_mix(h, fp_int(row.length()))
+        for cell in row {
+          h = fp_inlines(h, cell)
+        }
+      }
+      h
+    }
+    @core.ImageBlock(alt, url) =>
+      fp_mix(fp_mix(h0, 7UL), fp_int(alt.length() * 131 + url.length()))
+    @core.Hr => fp_mix(h0, 8UL)
+    @core.Raw(s) => fp_mix(fp_mix(h0, 9UL), fp_int(s.length()))
+  }
+}
+
+///|
+fn kind_start(kind : @core.ListKind) -> Int {
+  match kind {
+    @core.Bullet => 0
+    @core.Ordered(n) => n
+    @core.Task => 97
+  }
+}
+
+///|
 fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
   match b {
     @core.Heading(l, inls) =>

@@ -94,8 +94,8 @@ test "选区段带背景高亮" {
 }
 
 ///|
-test "token 布局表：CJK 逐字 + 行尾虚拟 token" {
-  // 「甲乙」：CJK 一字一 token，起点 0,1 + 末尾 2（行尾空白区）
+test "探针段表：行级合并 + 行尾虚拟段" {
+  // 「甲乙」宽折一行 → 单段 [0,2) + 行尾哨兵 2
   let bs = @core.parse_doc("甲乙\n")
   let cb = @gpui.CommandBuffer::new()
   cb.div()
@@ -107,13 +107,13 @@ test "token 布局表：CJK 逐字 + 行尾虚拟 token" {
     fn(_) { 2 },
     fn(_, _) { 3 },
   )
-  assert_eq(tok_starts_of(0), [0, 1, 2])
+  assert_eq(tok_starts_of(0), [0, 2])
 }
 
 ///|
-test "token 布局表：光标所在 token 分裂为两段" {
-  // "hello world" 默认 tokens [0,6),[6,5)；光标在 3 → 首 token 分裂，
-  // 子 token 起点表 [0,3,6,11]，右半段左缘 = 零宽光标位置
+test "探针段表：光标所在行分裂为两段" {
+  // "hello world" 折一行 [0,11)；光标在 3 → 行劈成两段 [0,3) [3,11)，
+  // 段起点表 [0,3,11]，右段左缘 = 零宽光标位置
   let bs = @core.parse_doc("hello world\n")
   let cb = @gpui.CommandBuffer::new()
   cb.div()
@@ -125,11 +125,11 @@ test "token 布局表：光标所在 token 分裂为两段" {
     fn(_) { 2 },
     fn(_, _) { 3 },
   )
-  assert_eq(tok_starts_of(0), [0, 3, 6, 11])
+  assert_eq(tok_starts_of(0), [0, 3, 11])
 }
 
 ///|
-test "token 布局表：拉丁词聚合" {
+test "探针段表：拉丁词聚合折一行一段" {
   let bs = @core.parse_doc("hello world\n")
   let cb = @gpui.CommandBuffer::new()
   cb.div()
@@ -141,7 +141,35 @@ test "token 布局表：拉丁词聚合" {
     fn(_) { 2 },
     fn(_, _) { 3 },
   )
-  assert_eq(tok_starts_of(0), [0, 6, 11])
+  assert_eq(tok_starts_of(0), [0, 11])
+}
+
+///|
+test "探针段表：超宽段落按行切段、起点严格递增、末端为单元长" {
+  // 重复短语超出渲染宽度 → 多行；每行一段，段表 = 各行起点 + 长度哨兵
+  let mut long : String = ""
+  for i = 0; i < 40; i = i + 1 {
+    long = long + "The quick brown fox "
+  }
+  let bs = @core.parse_doc(long + "\n")
+  let ulen = @core.collect_units(bs)[0].plain.to_array().length()
+  let cb = @gpui.CommandBuffer::new()
+  cb.div()
+  render_doc(
+    cb,
+    bs,
+    @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 }),
+    fn(_) { 1 },
+    fn(_) { 2 },
+    fn(_, _) { 3 },
+  )
+  let starts = tok_starts_of(0)
+  assert_true(starts.length() > 3) // 多行
+  assert_eq(starts[0], 0)
+  assert_eq(starts[starts.length() - 1], ulen)
+  for i in 1..<starts.length() {
+    assert_true(starts[i] > starts[i - 1])
+  }
 }
 
 ///|

@@ -322,7 +322,7 @@ fn char_styles(
   out
 }
 
-// --- token 布局表（点击定位契约：app 侧按单元下标查 token 起点）-----------
+// --- 探针段布局表（点击定位契约：app 侧按单元下标查探针段起点）-----------
 
 ///|
 let unit_starts : Array[Array[Int]] = []
@@ -336,8 +336,9 @@ fn remember_starts(unit : Int, starts : Array[Int]) -> Unit {
 }
 
 ///|
-/// 单元 `unit` 各 token 的起始字符偏移 + 末尾单元长度（作为「行尾空白区」
-/// 的虚拟 token）。空数组表示该单元不是 token 渲染的（代码块等）。
+/// 单元 `unit` 各探针段的起始字符偏移 + 末尾单元长度（作为「行尾空白区」
+/// 的虚拟段起点）。行级合并渲染：一段=行内一块连续文本，光标所在行可能
+/// 被光标劈成两段。空数组表示该单元不是探针段渲染的（代码块等）。
 pub fn tok_starts_of(unit : Int) -> Array[Int] {
   if unit >= 0 && unit < unit_starts.length() {
     unit_starts[unit]
@@ -424,9 +425,12 @@ pub fn set_preedit(text : String) -> Unit {
 let probe_gen : Ref[Int] = { val: 0 }
 
 ///|
-/// token 探针 key：单元 unit 的第 ti 个 token（与 tok_starts_of 下标一致）。
-pub fn probe_token_key(unit : Int, ti : Int) -> String {
-  "probe:t" +
+/// 探针段 key：单元 unit 的第 pi 个探针段（与 tok_starts_of 下标一致）。
+/// 一段 = 行内一块连续文本（行级合并渲染，仅光标所在行被光标劈成两段）。
+
+///|
+pub fn probe_part_key(unit : Int, ti : Int) -> String {
+  "probe:r" +
   probe_gen.val.to_string() +
   ":" +
   unit.to_string() +
@@ -435,7 +439,7 @@ pub fn probe_token_key(unit : Int, ti : Int) -> String {
 }
 
 ///|
-/// 行尾空白区探针 key：ti = 该单元的 token 数（starts 末位哨兵下标）。
+/// 行尾探针段 key：ti = 该单元的探针段数（starts 末位哨兵下标）。
 pub fn probe_tail_key(unit : Int, ti : Int) -> String {
   "probe:x" +
   probe_gen.val.to_string() +
@@ -446,11 +450,11 @@ pub fn probe_tail_key(unit : Int, ti : Int) -> String {
 }
 
 ///|
-/// 零宽光标：绝对定位的 2px 光标条，挂在 token div 内左缘——脱离排版
-/// 流，不占宽度、不推走后面的字；top/bottom=0 使高度自动等于行高。
-/// 它自己带同款点击 handler，2px 条带上的点击不会落空。
-/// 组词中时整个覆盖层是一行 `[组词文本][光标条]`：光标条顺排在下划线
-/// 组词文本之后（输入法的插入点在组词文本末尾），行底用页面色垫住。
+/// 零宽光标：2px 光标条，按流挂在所属探针段之前（或两段之间）——段的
+/// 左缘正是光标位置（光标落在段首，或光标劈行后右段的段首）。它自己带
+/// 同款点击 handler，2px 条带上的点击不会落空。
+/// 组词中时覆盖层是一行 `[组词文本][光标条]`：光标条顺排在下划线组词
+/// 文本之后（输入法的插入点在组词文本末尾）。
 /// 覆盖层 key="caret"：桥层据此捕获其窗口矩形，作为 IME 候选窗锚点。
 fn caret_overlay(
   cb : @gpui.CommandBuffer,
@@ -461,8 +465,6 @@ fn caret_overlay(
 ) -> Unit {
   if preedit_text.val == "" {
     cb.div()
-    cb.set_position(@gpui.POSITION_ABSOLUTE)
-    cb.set_inset(0, -1, 0, 0)
     cb.set_min_size(2, -1)
     cb.set_bg_color(rgb(col_caret))
     cb.set_on_click(rtok(unit, ti))
@@ -470,10 +472,7 @@ fn caret_overlay(
     cb.add_child()
   } else {
     cb.div()
-    cb.set_position(@gpui.POSITION_ABSOLUTE)
-    cb.set_inset(0, -1, 0, 0)
     cb.set_flex_row()
-    cb.set_bg_color(@gpui.Color::rgb(28, 30, 38))
     cb.set_on_click(rtok(unit, ti))
     cb.set_key("caret")
     cb.rich_text(
@@ -518,7 +517,44 @@ fn tail_zone(
 }
 
 ///|
-/// 一段 inline 文本 → 折行的 token 行。caret/lo/hi 语义同 inline_segments。
+/// 推入一个探针段：可选前置光标条 + 段 div（内含承载整段样式 run 的
+/// rich_text）。返回下一段下标。
+fn render_part(
+  cb : @gpui.CommandBuffer,
+  chars : Array[Char],
+  styles : Array[@gpui.RunStyle?],
+  starts : Array[Int],
+  s : Int,
+  e : Int,
+  caret_before : Bool,
+  unit : Int,
+  si : Int,
+  rtok : (Int, Int) -> Int,
+  size : Float,
+) -> Int {
+  if caret_before {
+    caret_overlay(cb, unit, si, rtok, size)
+  }
+  starts.push(s)
+  cb.div()
+  cb.set_cursor(@gpui.CURSOR_TEXT)
+  cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
+  cb.set_on_click(rtok(unit, si))
+  cb.set_key(probe_part_key(unit, si))
+  cb.rich_text(
+    token_segs(chars, styles, s, e),
+    col_text.0,
+    col_text.1,
+    col_text.2,
+    size,
+  )
+  cb.add_child() // rich_text → 段 div
+  cb.add_child() // 段 div → row
+  si + 1
+}
+
+///|
+/// 一段 inline 文本 → 折行的探针段行。caret/lo/hi 语义同 inline_segments。
 fn push_text(
   cb : @gpui.CommandBuffer,
   ns : Array[@core.Inline],
@@ -545,7 +581,7 @@ fn push_text(
     cb.set_cursor(@gpui.CURSOR_TEXT)
     cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
     cb.set_on_click(rtok(unit, 0))
-    cb.set_key(probe_token_key(unit, 0))
+    cb.set_key(probe_part_key(unit, 0))
     cb.rich_text([(" ", None)], col_text.0, col_text.1, col_text.2, size)
     cb.add_child() // rich_text → token div
     if caret == 0 {
@@ -557,57 +593,36 @@ fn push_text(
     cb.add_child() // container → slot
     return
   }
-  // 光标落在 token 内部时把该 token 切成两个子 token——右半段的左缘正是
-  // 光标位置，零宽光标条就画在那里（不插字符、不推文字）。
-  let sub_rows : Array[Array[(Int, Int, Int)]] = [] // (start, len, 全局子 token 下标)
+  // 行级合并渲染：每行一个探针段（一个 rich_text 节点承载整行的全部样式
+  // run）。gpui 每个文本节点有 ≈几十微秒的固定开销（shaping/element 构造/
+  // paint，测量见 fw 分解），逐 token 建节点会让每帧成本随 token 数线性增
+  // 长；按行合并后节点数 = 行数 + 光标劈行的一个额外段。光标落在行内部时
+  // 该行劈成左右两段，2px 光标条按流挂在两段之间——右段的左缘就是光标
+  // 位置（不插字符、不推文字）。探针段表 starts 语义不变：各段起点 + 末位
+  // 单元长哨兵，hit/click 契约不受影响。
   let starts : Array[Int] = []
-  let mut si = 0
-  for row in lays.rows {
-    let r : Array[(Int, Int, Int)] = []
-    for ti in row {
-      let t = lays.toks[ti]
-      if caret > t.0 && caret < t.0 + t.1 {
-        r.push((t.0, caret - t.0, si))
-        starts.push(t.0)
-        si = si + 1
-        r.push((caret, t.0 + t.1 - caret, si))
-        starts.push(caret)
-        si = si + 1
-      } else {
-        r.push((t.0, t.1, si))
-        starts.push(t.0)
-        si = si + 1
-      }
-    }
-    sub_rows.push(r)
-  }
-  starts.push(chars.length()) // 行尾空白区 = 下标 si，点击/光标 = 单元尾
-  remember_starts(unit, starts)
+  let mut si = 0 // 探针段下标（tail_zone 的哨兵下标 = 段数）
   cb.div()
   cb.set_flex_col()
-  let nrows = sub_rows.length()
+  let nrows = lays.rows.length()
   let mut ri = 0
-  for row in sub_rows {
+  for row in lays.rows {
+    let rlo = lays.toks[row[0]].0
+    let rt = lays.toks[row[row.length() - 1]]
+    let rhi = rt.0 + rt.1
     cb.div()
     cb.set_flex_row()
-    for t in row {
-      cb.div()
-      cb.set_cursor(@gpui.CURSOR_TEXT)
-      cb.set_whitespace(@gpui.WHITESPACE_PRE_WRAP)
-      cb.set_on_click(rtok(unit, t.2))
-      cb.set_key(probe_token_key(unit, t.2))
-      cb.rich_text(
-        token_segs(chars, styles, t.0, t.0 + t.1),
-        col_text.0,
-        col_text.1,
-        col_text.2,
-        size,
+    if caret > rlo && caret < rhi {
+      si = render_part(
+        cb, chars, styles, starts, rlo, caret, false, unit, si, rtok, size,
       )
-      cb.add_child() // rich_text → token div
-      if t.0 == caret {
-        caret_overlay(cb, unit, t.2, rtok, size)
-      }
-      cb.add_child() // token div → row
+      si = render_part(
+        cb, chars, styles, starts, caret, rhi, true, unit, si, rtok, size,
+      )
+    } else {
+      si = render_part(
+        cb, chars, styles, starts, rlo, rhi, caret == rlo, unit, si, rtok, size,
+      )
     }
     if ri == nrows - 1 {
       tail_zone(cb, unit, si, rtok, caret == chars.length(), size)
@@ -615,6 +630,8 @@ fn push_text(
     cb.add_child()
     ri = ri + 1
   }
+  starts.push(chars.length()) // 行尾空白区 = 下标 si，点击/光标 = 单元尾
+  remember_starts(unit, starts)
   cb.add_child()
 }
 

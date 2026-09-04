@@ -1,8 +1,8 @@
 /// 鼠标坐标命中测试：窗口像素坐标 → 插入点 (unit, offset)。
 ///
-/// 渲染层给每个 token / 行尾空白区 div 挂探针 key（render.mbt），gpui-sys
+/// 渲染层给每个探针段 / 行尾空白区 div 挂探针 key（render.mbt），gpui-sys
 /// 在 paint 时记录其真实布局矩形，这里经 gpui_probe_rect 拉回并按行/列映
-/// 射为光标位置。与点击定位同源（都读同一份 token 布局），拖拽光标不会和
+/// 射为光标位置。与点击定位同源（都读同一份探针段布局），拖拽光标不会和
 /// 点击光标互相矛盾；用真实布局矩形而非高度/宽度估算，落点精确。
 ///
 /// 本文件是 adapter 里放鼠标/探针 extern 声明的位置（render.mbt 契约：不
@@ -58,7 +58,7 @@ pub fn decode_mouse(payload : Bytes) -> (Int, Int, Int)? {
 }
 
 ///|
-/// 候选矩形：token 或行尾空白区。(x, y, x1, y1, unit, lo, hi)——
+/// 候选矩形：探针段或行尾空白区。(x, y, x1, y1, unit, lo, hi)——
 /// [lo, hi] 是该矩形水平覆盖的可寻字符偏移闭区间。
 type Hit = (Float, Float, Float, Float, Int, Int, Int)
 
@@ -87,7 +87,7 @@ pub fn caret_at_point(
       let mut ti = 0
       while ti <= ntok {
         let key = if ti < ntok {
-          probe_token_key(u, ti)
+          probe_part_key(u, ti)
         } else {
           probe_tail_key(u, ti)
         }

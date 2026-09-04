@@ -1,8 +1,8 @@
 /// 命中测试逻辑测试（不触 FFI：几何用假探针注入）。
 
 ///|
-/// key 尾两段数字（unit, ti）：键形如 "probe:t{gen}:{unit}:{ti}"，
-/// 手工从右向左数冒号解析，契约见 render.probe_token_key。
+/// key 尾两段数字（unit, ti）：键形如 "probe:r{gen}:{unit}:{ti}"，
+/// 手工从右向左数冒号解析，契约见 render.probe_part_key。
 fn digits(cs : Array[Char], a : Int, b : Int) -> Int? {
   if a >= b {
     return None
@@ -98,7 +98,12 @@ fn expect_hit(
 
 ///|
 test "命中：行内按比例 / 左右越界 / 跨单元行 / 无几何" {
-  let us = hit_render("hello world 你好\n\n第二段文字\n")
+  // 超宽段落：行级合并后单元 0 有多个探针段（每行一段），够断言插值
+  let mut long : String = ""
+  for i = 0; i < 30; i = i + 1 {
+    long = long + "The quick brown fox "
+  }
+  let us = hit_render(long + "\n\n第二段文字\n")
   assert_eq(us.length(), 2)
   let ulen0 = us[0].plain.to_array().length()
   let ulen1 = us[1].plain.to_array().length()
@@ -177,7 +182,7 @@ test "渲染输出携带探针 key" {
     fn(_, _) { 3 },
   )
   let bytes = cb.to_bytes()
-  let needle = @utf8.encode("probe:t")
+  let needle = @utf8.encode("probe:r")
   let mut found = false
   let mut i = 0
   while i + needle.length() <= bytes.length() {

@@ -621,7 +621,7 @@ pub fn box_id_of(unit : Int) -> Int {
 }
 
 ///|
-/// 单元 `unit` 第 `ti` 个 token（或 token 数 = 行尾空白区）的 click handler id。
+/// 单元 `unit` 第 `ti` 个探针段（或段数 = 行尾空白区）的 click handler id。
 pub fn token_click_id_of(unit : Int, ti : Int) -> Int {
   reg_token(unit, ti)
 }
@@ -641,7 +641,7 @@ fn on_token_click(unit : Int, ti : Int) -> Unit {
     on_unit_click(unit) // 该单元当前不是 token 渲染：退化为落块尾
     return
   }
-  // 编辑后 token 变少：下标越界钳到单元末尾
+  // 编辑后段数变少：下标越界钳到单元末尾
   let off = if ti < starts.length() {
     starts[ti]
   } else {

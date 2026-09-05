@@ -53,6 +53,10 @@ fn fake_probe(key : String) -> (Float, Float, Float, Float)? {
 }
 
 ///|
+/// 假 metrics：恒 None（无已绘布局）→ 全走线性插值回退路径，钉住旧行为。
+fn no_metrics(_k : String, _x : Float, _y : Float) -> Int? { None }
+
+///|
 fn hit_render(src : String) -> Array[@core.UnitRef] {
   let bs = @core.parse_doc(src)
   let cb = @gpui.CommandBuffer::new()
@@ -115,20 +119,20 @@ test "命中：行内按比例 / 左右越界 / 跨单元行 / 无几何" {
   let expect1 = starts[1] +
     ((0.5 : Float) * span1.to_float() + 0.5).floor().to_int()
   expect_hit(
-    caret_at_point(145, 60, 0, us.length(), us, fake_probe),
+    caret_at_point(145, 60, 0, us.length(), us, fake_probe, no_metrics),
     0,
     expect1,
     "token 中点插值",
   )
   // 远右 → 行尾（单元长度）；越左 → 行首 0
   expect_hit(
-    caret_at_point(999999, 60, 0, us.length(), us, fake_probe),
+    caret_at_point(999999, 60, 0, us.length(), us, fake_probe, no_metrics),
     0,
     ulen0,
     "行右外",
   )
   expect_hit(
-    caret_at_point(0, 60, 0, us.length(), us, fake_probe),
+    caret_at_point(0, 60, 0, us.length(), us, fake_probe, no_metrics),
     0,
     0,
     "行左外",
@@ -136,13 +140,13 @@ test "命中：行内按比例 / 左右越界 / 跨单元行 / 无几何" {
   // 第二单元行（y=74..98）；vy 远在版面下方（>一行量级）→ 空白不落点；
   // 行缝近旁（y=49，距首行 1px）仍吸附到首行。
   expect_hit(
-    caret_at_point(999999, 86, 0, us.length(), us, fake_probe),
+    caret_at_point(999999, 86, 0, us.length(), us, fake_probe, no_metrics),
     1,
     ulen1,
     "第二单元行",
   )
   assert_true(
-    caret_at_point(105, 5000, 0, us.length(), us, fake_probe).is_none(),
+    caret_at_point(105, 5000, 0, us.length(), us, fake_probe, no_metrics).is_none(),
   )
   // 行缝近旁（y=49，距首行 1px）吸附首行；x=105 在首 token（30px 宽、
   // span=starts[1]-starts[0]）的 1/6 处，按比例插值。
@@ -151,21 +155,21 @@ test "命中：行内按比例 / 左右越界 / 跨单元行 / 无几何" {
     starts[0] +
       (((5.0 : Float) / 30.0) * span0.to_float() + 0.5).floor().to_int()
   expect_hit(
-    caret_at_point(105, 49, 0, us.length(), us, fake_probe),
+    caret_at_point(105, 49, 0, us.length(), us, fake_probe, no_metrics),
     0,
     near_off,
     "行缝近旁吸附",
   )
   // 窗口裁剪：只给第 0 单元的几何区间，命中不得跑到第 1 单元
   expect_hit(
-    caret_at_point(999999, 86, 0, 1, us, fake_probe),
+    caret_at_point(999999, 86, 0, 1, us, fake_probe, no_metrics),
     0,
     ulen0,
     "窗口外单元不可命中",
   )
   // 无任何当帧几何（未 paint）→ None
   let nothing = fn(_k : String) -> (Float, Float, Float, Float)? { None }
-  assert_true(caret_at_point(200, 60, 0, us.length(), us, nothing).is_none())
+  assert_true(caret_at_point(200, 60, 0, us.length(), us, nothing, no_metrics).is_none())
 }
 
 ///|
@@ -239,21 +243,21 @@ test "代码块：探针段按行注册，点击映到行/列" {
   assert_eq(starts, [0, 12, 26, 27])
   // 行 2 段（ti=1，x=130..160）中点：span=14，线性插值 → 12+7=19
   expect_hit(
-    caret_at_point(145, 60, 0, us.length(), us, fake_probe),
+    caret_at_point(145, 60, 0, us.length(), us, fake_probe, no_metrics),
     0,
     19,
     "代码行中点插值",
   )
   // 末行尾区（ti=3）：远右点击 → 单元尾
   expect_hit(
-    caret_at_point(999999, 60, 0, us.length(), us, fake_probe),
+    caret_at_point(999999, 60, 0, us.length(), us, fake_probe, no_metrics),
     0,
     ulen,
     "代码块尾区",
   )
   // 越左 → 行首
   expect_hit(
-    caret_at_point(0, 60, 0, us.length(), us, fake_probe),
+    caret_at_point(0, 60, 0, us.length(), us, fake_probe, no_metrics),
     0,
     0,
     "代码块行左外",
@@ -261,8 +265,10 @@ test "代码块：探针段按行注册，点击映到行/列" {
 }
 
 ///|
-test "代码块光标是 div 条而非字符（▏ 不进文本流）" {
-  // 光标劈行（offset=16 在行 1 中部）：左右两段 + 绝对定位光标条
+test "代码块光标不劈行：▏ 不进文本流，行声明承载光标" {
+  // 光标在行 1 中部（offset=16）：探针段仍是每行一段（光标由桥层
+  // 在 paint 期按真实布局画 quad，见 declare_row → OP_SET_TEXT_ROW），
+  // 不再为光标把行劈成两段。
   let bs = @core.parse_doc("```rust\nfn main() {\n  let x = 42;\n}\n```\n")
   let cb = @gpui.CommandBuffer::new()
   cb.div()
@@ -277,6 +283,61 @@ test "代码块光标是 div 条而非字符（▏ 不进文本流）" {
   // ▏ = U+258F = E2 96 8F（历史实现曾以字符段画光标，会把后面的字推走）
   let glyph : Bytes = b"\xe2\x96\x8f"
   assert_false(bytes_contain(cb.to_bytes(), glyph))
-  // 劈行后行 1 拆成两段：starts = [0, 12, 16, 26, 27]
-  assert_eq(tok_starts_of(0), [0, 12, 16, 26, 27])
+  // 不劈行：starts 与无光标时一致 = 每硬行行首 + 末位单元长哨兵
+  assert_eq(tok_starts_of(0), [0, 12, 26, 27])
+}
+
+///|
+test "命中：metrics 精确通道（注入假布局）" {
+  let us = hit_render("```rust\nfn main() {\n  let x = 42;\n}\n```\n")
+  let starts = tok_starts_of(0)
+  assert_eq(starts, [0, 12, 26, 27])
+  // 假 metrics：记录被查询的 key，恒答复段内字符下标 3。
+  let asked : Array[String] = []
+  let fake_metrics = fn(k : String, _x : Float, _y : Float) -> Int? {
+    asked.push(k)
+    Some(3)
+  }
+  // 行 2 段（ti=1，x=130..160）内 x=145：metrics 答复 3 → 12+3=15。
+  // （插值路径会得 12+7=19，见上方代码行中点用例——两者可区分。）
+  expect_hit(
+    caret_at_point(145, 60, 0, us.length(), us, fake_probe, fake_metrics),
+    0,
+    15,
+    "metrics 精确落点",
+  )
+  assert_eq(asked.length(), 1)
+  let ks = asked[0].to_array()
+  let n = ks.length()
+  let ok_key =
+    n >= 4 &&
+      ks[n - 4] == ':' && ks[n - 3] == '0' && ks[n - 2] == ':' &&
+      ks[n - 1] == '1'
+  if !ok_key {
+    abort("metrics 必须用命中段的探针 key 查询（unit 0 段 1）")
+  }
+  // 答复越界钳到区间：99 → 段右端 26；-5 → 段左端 12。
+  let big = fn(_k : String, _x : Float, _y : Float) -> Int? { Some(99) }
+  expect_hit(
+    caret_at_point(145, 60, 0, us.length(), us, fake_probe, big),
+    0,
+    26,
+    "metrics 越右钳段尾",
+  )
+  let neg = fn(_k : String, _x : Float, _y : Float) -> Int? { Some(-5) }
+  expect_hit(
+    caret_at_point(145, 60, 0, us.length(), us, fake_probe, neg),
+    0,
+    12,
+    "metrics 越左钳段首",
+  )
+  // 行尾空白区（is_tail）不问 metrics：末行尾区 ti=3（x=190..220）中点
+  // 点击 = 单元尾，且 metrics 调用次数不变。
+  expect_hit(
+    caret_at_point(205, 60, 0, us.length(), us, fake_probe, fake_metrics),
+    0,
+    27,
+    "尾区不查 metrics",
+  )
+  assert_eq(asked.length(), 1)
 }

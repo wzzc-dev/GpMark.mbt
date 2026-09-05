@@ -442,10 +442,11 @@ fn main {
         println("BAD: code caret glyph leak or missing code text")
         failed.push(1)
       }
-      // 探针段按行注册（行首 0/12/26 + 哨兵 27）；光标 16 劈开行 1 → 16
+      // 探针段按行注册（行首 0/12/26 + 哨兵 27）；光标不再劈行
+      //（桥层按行声明画 quad，见 text-row ABI），段表与无光标时一致
       let starts = @mdmbt/adapter.tok_starts_of(code_u)
       let ulen = us_code[code_u].plain.to_array().length()
-      if starts.to_string() == "[0, 12, 16, 26, 27]" && ulen == 27 {
+      if starts.to_string() == "[0, 12, 26, 27]" && ulen == 27 {
         println("  ok: code probe starts registered")
       } else {
         println("BAD: code probe starts \{starts} (ulen=\{ulen})")

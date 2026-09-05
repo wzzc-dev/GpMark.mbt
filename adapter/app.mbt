@@ -251,6 +251,14 @@ let drag_moved : Ref[Bool] = { val: false }
 let mouse_placed : Ref[Bool] = { val: false }
 
 ///|
+/// metrics 通道生产实现（text-row ABI）：回读上一帧镜像的行真实布局，
+/// 窗口坐标 → 段内字符下标。无已绘布局返回 None，caret_at_point 回退
+/// 段宽线性插值（headless、首帧前等场景）。
+fn row_metrics(key : String, x : Float, y : Float) -> Int? {
+  @gpui.text_char_for_position(key, x, y)
+}
+
+///|
 fn hit_caret(x : Int, y : Int) -> @core.Caret? {
   ensure_height_cache()
   let us = @core.collect_units(ed.blocks)
@@ -265,7 +273,7 @@ fn hit_caret(x : Int, y : Int) -> @core.Caret? {
   } else {
     us.length()
   }
-  caret_at_point(x, y, u0, u1, us, probe_rect)
+  caret_at_point(x, y, u0, u1, us, probe_rect, row_metrics)
 }
 
 ///|

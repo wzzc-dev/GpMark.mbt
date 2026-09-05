@@ -58,14 +58,23 @@ pub fn decode_mouse(payload : Bytes) -> (Int, Int, Int)? {
 }
 
 ///|
-/// 候选矩形：探针段或行尾空白区。(x, y, x1, y1, unit, lo, hi)——
-/// [lo, hi] 是该矩形水平覆盖的可寻字符偏移闭区间。
-type Hit = (Float, Float, Float, Float, Int, Int, Int)
+/// 候选矩形：探针段或行尾空白区。(x, y, x1, y1, unit, lo, hi, key, is_tail)——
+/// [lo, hi] 是该矩形水平覆盖的可寻字符偏移闭区间；key 是行声明（text-row
+/// ABI）的探针 key，is_tail 标记行尾空白区（无行内布局，命中即单元尾）。
+type Hit = (Float, Float, Float, Float, Int, Int, Int, String, Bool)
+
+///|
+/// 行内 metrics 查询：探针 key + 窗口坐标 → 段内字符下标（text-row ABI 的
+/// gpui_text_char_for_position）。None = 本帧没有该行的已绘布局（headless /
+/// 未 paint / 窗口外），调用方回退线性插值。
+type RowMetrics = (String, Float, Float) -> Int?
 
 ///|
 /// 窗口坐标 (vx, vy) → 插入点。单元区间 [u0, u1) 为当前渲染窗口对应的
-/// 编辑单元范围；probe 注入几何查询（生产用 probe_rect，测试用假几何）。
-/// 当帧无任何几何（未 paint）时返回 None。
+/// 编辑单元范围；probe 注入几何查询（生产用 probe_rect，测试用假几何）；
+/// metrics 注入行内逐字符查询（生产用 @gpui.text_char_for_position，测试
+/// 用假函数）。行内优先走 metrics（真实布局、比例字体精确），无数据时回退
+/// 段宽线性插值。当帧无任何几何（未 paint）时返回 None。
 pub fn caret_at_point(
   vx : Int,
   vy : Int,
@@ -73,6 +82,7 @@ pub fn caret_at_point(
   u1 : Int,
   us : Array[@core.UnitRef],
   probe : (String) -> (Float, Float, Float, Float)?,
+  metrics : RowMetrics,
 ) -> @core.Caret? {
   let vxf = vx.to_float()
   let vyf = vy.to_float()
@@ -86,17 +96,18 @@ pub fn caret_at_point(
       let ulen = us[u].plain.to_array().length()
       let mut ti = 0
       while ti <= ntok {
-        let key = if ti < ntok {
-          probe_part_key(u, ti)
-        } else {
+        let is_tail = ti >= ntok
+        let key = if is_tail {
           probe_tail_key(u, ti)
+        } else {
+          probe_part_key(u, ti)
         }
         match probe(key) {
           Some((x, y, w, h)) => {
             let lo = starts[ti]
-            let hi = if ti < ntok { starts[ti + 1] } else { ulen }
+            let hi = if is_tail { ulen } else { starts[ti + 1] }
             hits.push(
-              (x, y, x + w, y + h, u, lo, if hi > lo { hi } else { lo }),
+              (x, y, x + w, y + h, u, lo, if hi > lo { hi } else { lo }, key, is_tail),
             )
           }
           None => ()
@@ -150,15 +161,35 @@ pub fn caret_at_point(
     }
   }
   let pick = if pi >= 0 { hits[pi] } else { hits[li] }
-  // 区间内按水平比例插值到 [lo, hi]；落在矩形右侧（区间缝隙/尾空白）取 hi。
-  let span = (pick.6 - pick.5).to_float()
-  let w = pick.2 - pick.0
-  let off = if vxf >= pick.2 || w <= 0.0 {
+  // 段内落点：行尾空白区 = 区间右端；文本段优先问真实布局（逐字符精确，
+  // gpui 最近字符语义含"文字右侧 = 行尾"），metrics 无数据回退段宽线性插值。
+  let off = if pick.8 || vxf >= pick.2 {
     pick.6
   } else {
-    let frac = (vxf - pick.0) / w
-    let k = (frac * span + 0.5).floor().to_int()
-    pick.5 + k
+    match metrics(pick.7, vxf, vyf) {
+      Some(idx) => {
+        let mut o = pick.5 + idx
+        if o > pick.6 {
+          o = pick.6
+        }
+        if o < pick.5 {
+          o = pick.5
+        }
+        o
+      }
+      None => {
+        // 区间内按水平比例插值到 [lo, hi]；零宽矩形无从插值，取右端。
+        let span = (pick.6 - pick.5).to_float()
+        let w = pick.2 - pick.0
+        if w <= 0.0 {
+          pick.6
+        } else {
+          let frac = (vxf - pick.0) / w
+          let k = (frac * span + 0.5).floor().to_int()
+          pick.5 + k
+        }
+      }
+    }
   }
   let mut o = off
   if o < pick.5 {

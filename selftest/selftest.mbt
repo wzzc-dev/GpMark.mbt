@@ -189,7 +189,8 @@ fn main {
       }
     }
   }
-  // --- token 级点击定位：点击列表项第 2 个 token，光标落 token 起点 ---
+  // --- 行段点击定位：点击列表项第 1 个行段，光标落行首（7db0276 行粒度
+  // 合并后 tok_starts_of 以"行"为段；token 级点击语义已并入像素路径）---
   {
     let u0b = @core.collect_units(ed.blocks)
     let mut item_u2 = -1
@@ -206,16 +207,16 @@ fn main {
         @nakake/gpui-bindings.ABI_VERSION,
         @nakake/gpui-bindings.EVENT_CLICK,
         0,
-        @mdmbt/adapter.token_click_id_of(item_u2, 1),
+        @mdmbt/adapter.token_click_id_of(item_u2, 0),
         0,
       )
       let d = dump0()
       let f2 = ed.sel.focus
-      if f2.unit == item_u2 && f2.offset == 1 &&
+      if f2.unit == item_u2 && f2.offset == 0 &&
         d.to_array().filter(c => c == '▏').length() == 0 {
-        println("  ok: token click positions caret at token start, no text shift")
+        println("  ok: row-segment click positions caret at row start")
       } else {
-        println("BAD: token click caret wrong: \{f2.unit}@\{f2.offset}")
+        println("BAD: row-segment click caret wrong: \{f2.unit}@\{f2.offset}")
         failed.push(1)
       }
     }
@@ -441,10 +442,10 @@ fn main {
         println("BAD: code caret glyph leak or missing code text")
         failed.push(1)
       }
-      // 探针段按行注册：3 硬行 + 哨兵（= 单元长度）
+      // 探针段按行注册（行首 0/12/26 + 哨兵 27）；光标 16 劈开行 1 → 16
       let starts = @mdmbt/adapter.tok_starts_of(code_u)
       let ulen = us_code[code_u].plain.to_array().length()
-      if starts.length() == 4 && starts[starts.length() - 1] == ulen {
+      if starts.to_string() == "[0, 12, 16, 26, 27]" && ulen == 27 {
         println("  ok: code probe starts registered")
       } else {
         println("BAD: code probe starts \{starts} (ulen=\{ulen})")

@@ -38,7 +38,11 @@ fn bump_sel() -> Unit {
 // 高，md_mbt 保真渲染改用估算高度前缀和）。
 
 ///|
-const WINDOW_PAD : Float = 800.0
+/// 上下各留 256px 过扫描：视口 800 + 2×256 ≈ 1312px 提交量。pad 越大，
+/// gpui 每帧 taffy 重排的元素越多（frame_work 随挂载行数线性增长）；
+/// ±480px 滚轮步进在 256px pad 下仍每步触发窗口更新，几何探针与 spacer
+/// 机制不变。
+const WINDOW_PAD : Float = 256.0
 
 ///|
 let viewport_h : Ref[Float] = { val: 800.0 }

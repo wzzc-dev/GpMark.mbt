@@ -65,7 +65,9 @@ type Hit = (Float, Float, Float, Float, Int, Int, Int, String, Bool)
 
 ///|
 /// 行内 metrics 查询：探针 key + 窗口坐标 → 段内字符下标（text-row ABI 的
-/// gpui_text_char_for_position）。None = 本帧没有该行的已绘布局（headless /
+/// gpui_text_char_for_position，最近字符边界语义：点在字符左半 → 边界在其
+/// 前，右半 → 其后，与光标 quad 的 position_for_index 同源一致）。
+/// None = 本帧没有该行的已绘布局（headless /
 /// 未 paint / 窗口外），调用方回退线性插值。
 type RowMetrics = (String, Float, Float) -> Int?
 

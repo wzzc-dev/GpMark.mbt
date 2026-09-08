@@ -49,6 +49,9 @@ jobs:
           moon version --all
           rustc --version
 
+      - name: Resolve MoonBit dependencies
+        run: moon update
+
       - name: Build (native)
         run: ./build.sh
 

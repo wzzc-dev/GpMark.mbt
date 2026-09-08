@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 # 构建 md_mbt demo：
-# 1) 通过 third_party/gpui-moonbit 的构建驱动确保 Rust staticlib（gpui-sys）就绪；
-# 2) moon build --target native 生成 main.exe（link 子包会把静态库参数带进来）。
+# moon build --target native 时，third_party/gpui-moonbit 的 link 子包 prebuild
+# 钩子（moonbit-bindings/build.py）会先用 cargo 构建 gpui-sys staticlib 并注入
+# 链接参数，无需在脚本里手动预热（冷缓存 CI 同样成立）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-GPUI="$ROOT/third_party/gpui-moonbit"
-STATICLIB="$GPUI/gpui-sys/target/aarch64-apple-darwin/debug/libgpui_sys.a"
-
-if [ ! -f "$STATICLIB" ]; then
-  echo "[build] gpui-sys staticlib 缺失，调用上游构建驱动…"
-  (cd "$GPUI" && ./build.sh --no-run) || (cd "$GPUI" && cargo build -p gpui-sys)
-fi
 
 echo "[build] moon build (native)…"
 cd "$ROOT"

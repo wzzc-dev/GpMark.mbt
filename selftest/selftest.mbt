@@ -43,7 +43,7 @@ fn main {
     "initial build_tree",
   )
   let dump = dump0()
-  check("md_mbt 编辑器演示", dump) // 标题文本（# 不渲染，光标在文本前）
+  check("GpMark 编辑器演示", dump) // 标题文本（# 不渲染，光标在文本前）
   check("GPUI 后端", dump)
   check("WYSIWYG 核心", dump)
   check("•", dump)
@@ -54,7 +54,7 @@ fn main {
   check("fn greet(name : String)", dump)
   check("链接", dump) // 链接渲染为内层文本（URL 不显示）
   check("已完成任务", dump)
-  check("moon.png", dump) // 图片块 alt · url
+  check("moui", dump) // 图片块 alt（渲染为图下说明文本，URL 不进文本流）
   check("<div class=\"raw-block\">", dump) // Raw 块原样可见
   // 光标是绝对定位覆盖层，不进入文本流：▏ 不应出现在 dump（回归防护：
   // 曾以字符段实现，会把后面的字推走一格）
@@ -335,7 +335,7 @@ fn main {
     'b'.to_int(),
     @nakake/gpui-bindings.MOD_PLATFORM,
   )
-  if @mdmbt/adapter.dump().contains("**md_mbt 编辑器演示**") {
+  if @mdmbt/adapter.dump().contains("**GpMark 编辑器演示**") {
     println("  ok: Cmd+A + Cmd+B bolded whole doc")
   } else {
     println("BAD: Cmd+B did not bold selection")
@@ -348,7 +348,7 @@ fn main {
     'z'.to_int(),
     @nakake/gpui-bindings.MOD_PLATFORM,
   )
-  if !@mdmbt/adapter.dump().contains("**md_mbt 编辑器演示**") {
+  if !@mdmbt/adapter.dump().contains("**GpMark 编辑器演示**") {
     println("  ok: Cmd+Z undid bold")
   } else {
     println("BAD: undo did not restore bold state")

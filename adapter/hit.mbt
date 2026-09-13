@@ -35,10 +35,10 @@ pub fn probe_rect(key : String) -> (Float, Float, Float, Float)? {
   if gpui_probe_rect_ffi(bs, bs.length(), out) == 0 {
     Some(
       (
-        le_i32(out, 0).to_float(),
-        le_i32(out, 4).to_float(),
-        le_i32(out, 8).to_float(),
-        le_i32(out, 12).to_float(),
+        Float::from_int(le_i32(out, 0)),
+        Float::from_int(le_i32(out, 4)),
+        Float::from_int(le_i32(out, 8)),
+        Float::from_int(le_i32(out, 12)),
       ),
     )
   } else {
@@ -86,8 +86,8 @@ pub fn caret_at_point(
   probe : (String) -> (Float, Float, Float, Float)?,
   metrics : RowMetrics,
 ) -> @core.Caret? {
-  let vxf = vx.to_float()
-  let vyf = vy.to_float()
+  let vxf = Float::from_int(vx)
+  let vyf = Float::from_int(vy)
   let hits : Array[Hit] = []
   let mut u = if u0 < 0 { 0 } else { u0 }
   let uend = if u1 > us.length() { us.length() } else { u1 }
@@ -181,7 +181,7 @@ pub fn caret_at_point(
       }
       None => {
         // 区间内按水平比例插值到 [lo, hi]；零宽矩形无从插值，取右端。
-        let span = (pick.6 - pick.5).to_float()
+        let span = Float::from_int(pick.6 - pick.5)
         let w = pick.2 - pick.0
         if w <= 0.0 {
           pick.6

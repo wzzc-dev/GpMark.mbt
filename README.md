@@ -1,4 +1,4 @@
-# md_mbt — GPUI 后端的 Markdown 所见即所得编辑器核心
+# GpMark（md_mbt）— GPUI 后端的 Markdown 所见即所得编辑器核心
 
 MoonBit 实现的可复用 Markdown WYSIWYG **编辑核心**，渲染后端为
 [gpui-moonbit](https://github.com/nakake/gpui-moonbit)（MoonBit → C FFI →
@@ -79,9 +79,9 @@ moon test                     # core + adapter 单元测试（68 个，无 GUI�
 moon build --target native    # 首次会由 link 包 prebuild 触发 cargo 构建 libgpui_sys.a
 
 ./build.sh                    # 确保 staticlib + 构建所有 native 目标
-./bundle.sh                   # 打包 dist/MdMbt.app（macOS bundle，键盘投递需要）
-open dist/MdMbt.app           # 启动编辑器 demo
-open dist/MdMbt.app --args <file.md>   # 按文件启动：直接打开该 Markdown 文件（失败回退 demo）
+./bundle.sh                   # 打包 dist/GpMark.app（macOS bundle，键盘投递需要）
+open dist/GpMark.app          # 启动编辑器 demo
+open dist/GpMark.app --args <file.md>  # 按文件启动：直接打开该 Markdown 文件（失败回退 demo）
 ```
 
 自检（真实 FFI 链路，可在无窗口环境跑）：

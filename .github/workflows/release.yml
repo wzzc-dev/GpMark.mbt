@@ -1,10 +1,19 @@
 name: Release
 
-# 发布 macOS arm64 .app 到 GitHub Release。
+# 发布 GpMark（GPUI 后端 Markdown WYSIWYG）三平台二进制。
 # 触发：打 `v*` tag（正式发布）或手动 workflow_dispatch（滚动 prerelease 快照）。
-# 与 CI（ci.yml）同链路：build.sh 驱动 gpui-sys staticlib + moon build，
-# bundle.sh 把 main.exe 包进带 Info.plist 的 MdMbt.app（裸 Mach-O 收不到
-# 键盘事件，必须 bundle）。产物为 debug 构建，与仓库文档化的本地构建入口一致。
+#
+# 与 CI（ci.yml）同链路：gpui-sys staticlib 由 link 包 prebuild 驱动 cargo 构建，
+# moon build 完成最终链接。macOS 额外跑 build.sh 与无头 selftest，再用 bundle.sh
+# 把 main.exe 包进带 Info.plist 的 GpMark.app（裸 Mach-O 收不到键盘事件，必须
+# bundle）；Linux / Windows 的 GPUI 窗口不需要 bundle，直接发行可执行文件。
+#
+# 构建与发布分成两个 job：三个平台并行构建并各自上传 artifact，再由单个 publish
+# job 下载全部产物、一次性创建 release。让三个 job 各自调用 action-gh-release 会
+# 并发创建同一个 tag 的 release，先到的建好、后到的可能报 already_exists 或互相
+# 覆盖附件。
+#
+# 产物为 debug 构建，与仓库文档化的本地构建入口一致。
 
 on:
   push:
@@ -14,14 +23,28 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_INCREMENTAL: 0
+
 jobs:
-  macos-arm64:
-    name: macOS arm64
-    runs-on: macos-14
-    timeout-minutes: 90
-    env:
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_INCREMENTAL: 0
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-14
+            slug: macos-arm64
+          - name: Linux x86_64
+            os: ubuntu-latest
+            slug: linux-x86_64
+          - name: Windows x64
+            os: windows-latest
+            slug: windows-x64
     defaults:
       run:
         shell: bash
@@ -44,6 +67,19 @@ jobs:
         with:
           workspaces: third_party/gpui-moonbit/gpui-sys
 
+      - name: Install XCB/XKB development libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libc6-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+
+      # gpui release 构建的 build.rs 用 fxc.exe 预编译 shader 字节；它的自动发现
+      # 只认硬编码的 10.0.26100.0 SDK 路径，这里显式喂一个（GPUI_FXC_PATH 优先）。
+      - name: Export GPUI_FXC_PATH (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          fxc="$(ls -1 "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/fxc.exe 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$fxc" ]; then echo "fxc.exe not found under Windows Kits\\10\\bin" >&2; exit 1; fi
+          echo "GPUI_FXC_PATH=$(cygpath -w "$fxc")" >> "$GITHUB_ENV"
+
       - name: Toolchain versions
         run: |
           moon version --all
@@ -52,31 +88,93 @@ jobs:
       - name: Resolve MoonBit dependencies
         run: moon update
 
-      - name: Build (native)
+      # macOS 走项目入口 build.sh（staticlib 检查 + moon build）；
+      # Linux/Windows 由 link 包 prebuild 在 moon build 内完成 cargo 构建与链接参数注入。
+      - name: Build (native, macOS entrypoint)
+        if: runner.os == 'macOS'
         run: ./build.sh
 
+      - name: Build (native, prebuild-driven)
+        if: runner.os != 'macOS'
+        run: moon build --target native
+
       - name: Selftest (headless, guards the FFI chain)
+        if: runner.os == 'macOS'
         run: |
           ./_build/native/debug/build/mdmbt/selftest/selftest.exe | tee selftest.log
           grep -q "SELFTEST PASS" selftest.log
 
-      - name: Bundle and package
+      # 文件名里的 tag：推 tag 时就是 tag 本身，手动触发时快照名固定为
+      # dev-snapshot，因此这里先算一次，后续打包与发布共用同一个值。
+      - name: Resolve release tag
         run: |
-          ./bundle.sh
           tag="${GITHUB_REF_NAME}"
           [ "${{ github.event_name }}" = "workflow_dispatch" ] && tag="dev-snapshot"
           echo "TAG=$tag" >> "$GITHUB_ENV"
-          ditto -c -k --keepParent dist/MdMbt.app "MdMbt_${tag}_macos-arm64.zip"
 
-      - name: Publish GitHub Release
+      # 一次构建、两条发行路径：macOS 用 .app（GUI 键盘投递的前提），其余平台直接
+      # 发行可执行文件。都把二进制改名成产品名 GpMark，避免用户拿到 main.exe。
+      - name: Package (macOS app bundle)
+        if: runner.os == 'macOS'
+        run: |
+          ./bundle.sh
+          mkdir -p release
+          ditto -c -k --keepParent dist/GpMark.app "release/GpMark_${TAG}_macos-arm64.zip"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p release
+          install -m 0755 _build/native/debug/build/mdmbt/main/main.exe release/GpMark
+          tar -czf "release/GpMark_${TAG}_linux-x86_64.tar.gz" -C release GpMark
+          rm release/GpMark
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p release
+          cp _build/native/debug/build/mdmbt/main/main.exe release/GpMark.exe
+          powershell -NoProfile -Command \
+            "Compress-Archive -Path release/GpMark.exe -DestinationPath 'release/GpMark_${TAG}_windows-x64.zip' -Force"
+          rm release/GpMark.exe
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: GpMark-${{ matrix.slug }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: GpMark-*
+          path: release
+          merge-multiple: true
+
+      - name: List packages
+        run: ls -l release
+
+      - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && 'dev-snapshot' || github.ref_name }}
           prerelease: ${{ github.event_name == 'workflow_dispatch' }}
           generate_release_notes: ${{ github.event_name == 'push' }}
-          files: MdMbt_${{ env.TAG }}_macos-arm64.zip
+          files: release/*
           body: |
-            GpMark（md_mbt，GPUI 后端 Markdown WYSIWYG）macOS arm64 应用包，未签名：
-            解压后如遇 Gatekeeper 拦截，执行
-            `xattr -dr com.apple.quarantine MdMbt.app` 再打开。
-            带终端输出运行：`./MdMbt.app/Contents/MacOS/MdMbt`。
+            GpMark（GPUI 后端 Markdown WYSIWYG，MoonBit + Zed GPUI）三平台发行包，均未签名。
+
+            - macOS arm64：解压得到 `GpMark.app`。如遇 Gatekeeper 拦截，
+              执行 `xattr -dr com.apple.quarantine GpMark.app` 再打开。
+              带终端输出运行：`./GpMark.app/Contents/MacOS/GpMark`。
+            - Linux x86_64：解压后 `chmod +x GpMark && ./GpMark`（需要 libxcb / libxkbcommon）。
+            - Windows x64：解压后直接运行 `GpMark.exe`。
+
+            打开文档：把 `.md` 路径作为第一个参数，例如 `GpMark notes.md`；无参数时打开内置示例文档。

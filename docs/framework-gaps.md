@@ -139,7 +139,7 @@ widget，见缺口 2）。库包又不能加 `cc-link-flags`（会令 moon 误�
      弹出期间本进程同步阻塞在 popen 上，等价模态；取消/出错返回空即无操作。
      Windows 上 gpui 把 platform 修饰映射到 Win 键（几乎传不进应用），
      因此 adapter 的快捷键判定在 win32 额外接受 Ctrl（`cmd_mask`）。
-  2. `open dist/MdMbt.app --args <path>` 按文件启动（Finder「打开方式」
+  2. `open dist/GpMark.app --args <path>` 按文件启动（Finder「打开方式」
      的命令行形态），失败回退内置 demo。
   3. 剪贴板已绕开本缺口：`adapter/clipboard_stub.c`（native-stub）经
      `pbcopy`/`pbpaste` 同步读写系统剪贴板，`Cmd+C/X/V` 直接可用——见缺口 13。

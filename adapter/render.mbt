@@ -189,11 +189,17 @@ fn emit_inlines(
         st[4] = st2[4]
       }
       @core.Image(_, _) =>
+        // 行内图片：段落是一条文本行（见 push_text 的行级合并渲染），无法在
+        // 其中插入真实的图片盒而不破坏光标/计测行模型。仍按原文渲染，但换
+        // 成「内联标记」的观感——等宽底色 + 主题色，与代码 run 同一套语汇，
+        // 一眼能看出这里是一段图片语法而不是普通斜体文字。
         emit_text(
           out,
           @core.inline_plain(n),
           st,
-          Some(@gpui.RunStyle::new(color=rgb(col_mark), italic=true)),
+          Some(
+            @gpui.RunStyle::new(color=rgb(col_mark), background=rgb(col_codebg)),
+          ),
         )
       @core.Footnote(nm) =>
         emit_text(
@@ -292,7 +298,12 @@ fn push_char_styles(
           hi,
           merge_style(
             base,
-            Some(@gpui.RunStyle::new(color=rgb(col_mark), italic=true)),
+            Some(
+              @gpui.RunStyle::new(
+                color=rgb(col_mark),
+                background=rgb(col_codebg),
+              ),
+            ),
           ),
           pos,
         )
@@ -507,7 +518,11 @@ fn declare_row(
   cb.set_text_row(
     probe_part_key(unit, si),
     content,
-    if blinking { caret_char } else { -1 },
+    if blinking {
+      caret_char
+    } else {
+      -1
+    },
     col_caret.0,
     col_caret.1,
     col_caret.2,
@@ -631,7 +646,9 @@ fn push_text(
     let rhi = rt.0 + rt.1
     cb.div()
     cb.set_flex_row()
-    si = render_part(cb, chars, styles, starts, rlo, rhi, caret, unit, si, rtok, size)
+    si = render_part(
+      cb, chars, styles, starts, rlo, rhi, caret, unit, si, rtok, size,
+    )
     if ri == nrows - 1 {
       tail_zone(cb, unit, si, rtok)
     }
@@ -653,6 +670,101 @@ fn heading_size(level : Int) -> Float {
     5 => 16.0
     _ => 15.0
   }
+}
+
+// --- 图片（issue #103）-----------------------------------------------------
+//
+// 渲染侧只做三件事：把 Markdown 目标解析成 gpui 能取的 source、给出稳定的
+// 盒子尺寸、把盒子交给 `img()`。取字节与解码全在桥层（gpui 的 asset
+// pipeline）：`http(s)://` 走窗口的 HttpClient 异步下载，其余走文件系统；
+// 因此这里既不读盘也不联网，`moon test` 仍可对命令缓冲做纯字节断言。
+//
+// 盒子的两个数字都是**上界**（不是固定画框）：图片按自身像素尺寸排版，超出
+// 上界的部分由 gpui 按纵横比收缩；`fit` 只决定图像在这块盒子里怎么摆。
+// 换来的收益是排版确定性——图片的真实宽高要解码完才知道，而估高与滚动行程
+// 必须在解码前就有值；上界与占位卡用的是同一组数字，加载完成的瞬间不会出现
+// 二次回流。
+
+///|
+/// 图片盒宽上界：正文栏宽与 480pt 取小。太宽的截图在现代文档里很常见，
+/// 按原始像素铺满会让正文无法阅读。
+let image_max_width : Float = 480.0
+
+///|
+/// 图片盒宽下界：极窄容器（嵌套引用/列表）里也要留出可辨认的卡片宽度。
+let image_min_width : Float = 40.0
+
+///|
+/// 图片盒高上界：按 3:2 的比例跟随宽度，并夹在 [120, 320]。下界保证极窄
+/// 容器（引用/嵌套列表）里图片仍是一张可辨认的卡片而不是一条线。
+fn image_max_height(width : Float) -> Float {
+  let h = width * 2.0 / 3.0
+  if h < 120.0 {
+    120.0
+  } else if h > 320.0 {
+    320.0
+  } else {
+    h
+  }
+}
+
+///|
+/// 当前文档所在目录（空串 = 未关联文件，如内置 demo）。图片的相对路径以
+/// 它为基准解析：gpui 的文件加载器以进程工作目录为基准，而文档可能开在
+/// 任何地方，把重根放在这里也是「所见即所存」——保存回去的仍是相对路径。
+let image_base_dir : Ref[String] = { val: "" }
+
+///|
+pub fn set_image_base_dir(dir : String) -> Unit {
+  image_base_dir.val = dir
+}
+
+///|
+/// Markdown 图片目标 → 交给 gpui 的 source 串。
+///
+/// 绝对目标原样透传（`data:`/`http(s)://`/`file://`/`/…`/`C:\…`），相对
+/// 目标拼到当前文档目录；未关联文件时保持原样，由加载器按工作目录解析。
+/// 与 `vendor/MoUI` 的 `markdown_target_is_absolute` 同一套判定，避免两个
+/// 编辑器对同一份文档给出不同的解析结果。
+pub fn resolve_image_source(target : String) -> String {
+  let t = target.trim().to_owned()
+  if t == "" || image_target_is_absolute(t) || image_base_dir.val == "" {
+    return t
+  }
+  let dir = image_base_dir.val
+  let chars = dir.to_array()
+  let ends_with_sep = chars.length() > 0 &&
+    (chars[chars.length() - 1] == '/' || chars[chars.length() - 1] == '\\')
+  if ends_with_sep {
+    dir + t
+  } else {
+    dir + "/" + t
+  }
+}
+
+///|
+fn image_target_is_absolute(target : String) -> Bool {
+  target.has_prefix("data:") ||
+  target.has_prefix("http://") ||
+  target.has_prefix("https://") ||
+  target.has_prefix("file://") ||
+  target.has_prefix("/") ||
+  target.has_prefix("\\") ||
+  (target.length() >= 2 && target[1] == ':')
+}
+
+///|
+/// 平台无关的取目录：`/a/b/c.md` → `/a/b`，`c.md` → `""`。
+pub fn image_base_dir_of(path : String) -> String {
+  let chars = path.to_array()
+  let mut i = chars.length() - 1
+  while i >= 0 {
+    if chars[i] == '/' || chars[i] == '\\' {
+      return String::from_array(chars[0:i])
+    }
+    i = i - 1
+  }
+  ""
 }
 
 ///|
@@ -801,13 +913,19 @@ pub fn estimate_slot_height(b : @core.Block, avail : Float) -> Float {
 // 密码学哈希——极罕见的「字节数不变的等长替换」若得到同指纹，只是让
 // spacer 多复用一次旧估算高，与估算本身 ±10% 的既容误差同级。
 const FP_OFFSET : UInt64 = 0xcbf29ce484222325UL
+
+///|
 const FP_PRIME : UInt64 = 0x100000001b3UL
 
 ///|
-fn fp_mix(h : UInt64, v : UInt64) -> UInt64 { (h ^ v) * FP_PRIME }
+fn fp_mix(h : UInt64, v : UInt64) -> UInt64 {
+  (h ^ v) * FP_PRIME
+}
 
 ///|
-fn fp_int(v : Int) -> UInt64 { v.to_uint64() }
+fn fp_int(v : Int) -> UInt64 {
+  v.to_uint64()
+}
 
 ///|
 fn fp_inline(h : UInt64, n : @core.Inline) -> UInt64 {
@@ -856,8 +974,10 @@ pub fn block_fingerprint(b : @core.Block) -> UInt64 {
       h
     }
     @core.ListBlock(kind, items) => {
-      let mut h =
-        fp_mix(h0, fp_int(5000 + 100 * items.length() + kind_start(kind)))
+      let mut h = fp_mix(
+        h0,
+        fp_int(5000 + 100 * items.length() + kind_start(kind)),
+      )
       for it in items {
         h = fp_inlines(fp_mix(h, 5UL), it.content)
         for ch in it.children {
@@ -992,7 +1112,22 @@ fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
       }
       h
     }
-    @core.ImageBlock(_, _) => line_h(16.0)
+    @core.ImageBlock(alt, _) => {
+      // 与 render_block 的图片盒同源：估高 = 盒高 + 一行 alt 说明。图片的
+      // 真实高度要解码完才知道，估高只负责窗口外 spacer 的行程量。
+      let width : Float = if avail < image_max_width {
+        avail
+      } else {
+        image_max_width
+      }
+      let width : Float = if width < image_min_width {
+        image_min_width
+      } else {
+        width
+      }
+      let caption : Float = if alt != "" { line_h(12.0) + 2.0 } else { 0.0 }
+      image_max_height(width) + caption
+    }
     @core.Hr => 14.0
     @core.Raw(_) => {
       let cs = @core.block_plain(b).to_array()
@@ -1215,12 +1350,31 @@ fn render_block(
       }
     }
     @core.ImageBlock(alt, url) => {
-      cb.set_flex_row()
-      cb.set_gap(8.0)
-      cb.text("⛁", col_mark.0, col_mark.1, col_mark.2, 16.0)
+      let width : Float = if avail < image_max_width {
+        avail
+      } else {
+        image_max_width
+      }
+      let width : Float = if width < image_min_width {
+        image_min_width
+      } else {
+        width
+      }
+      cb.set_flex_col()
+      cb.set_center()
+      cb.image(
+        resolve_image_source(url),
+        width,
+        image_max_height(width),
+        @gpui.IMAGE_FIT_CONTAIN,
+      )
       cb.add_child()
-      cb.text(alt + "  ·  " + url, col_muted.0, col_muted.1, col_muted.2, 13.0)
-      cb.add_child()
+      // alt 文本：Markdown 里它就是图片的替代内容，加载失败时是唯一能告诉
+      // 用户「这里本来该有什么」的东西，所以始终显示在图下而不是只在失败时。
+      if alt != "" {
+        cb.text(alt, col_muted.0, col_muted.1, col_muted.2, 12.0)
+        cb.add_child()
+      }
     }
     @core.Hr => {
       cb.set_padding_sides(6, 6, 6, 6)
@@ -1344,11 +1498,7 @@ fn code_part(
   cb.set_on_click(rtok(unit, si))
   cb.set_key(probe_part_key(unit, si))
   let segs : Array[Seg] = []
-  let text = if e > s {
-    String::from_array(chars[s:e])
-  } else {
-    " "
-  }
+  let text = if e > s { String::from_array(chars[s:e]) } else { " " }
   emit_text(segs, text, [-1, ll, lh, 0, s], base)
   cb.rich_text(segs, col_text.0, col_text.1, col_text.2, size)
   // 光标在本行但行窗被选区窗口裁剪时不改变行声明——lc 来自 line_window

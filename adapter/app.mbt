@@ -292,7 +292,7 @@ fn on_mouse(phase : Int, x : Int, y : Int) -> Unit {
     drag_moved.val = false
     let anchor = hit_caret(x, y)
     drag_anchor.val = anchor
-    mouse_placed.val = anchor.is_some()
+    mouse_placed.val = anchor is Some(_)
     match anchor {
       Some(c) => {
         ed.set_sel(@core.collapsed_sel(c))
@@ -529,7 +529,7 @@ fn reg_bar(slot : Int) -> Int {
 ///|
 /// demo 用的示例文档（标题/列表/任务/引用/代码/表格/图片/HR/行内样式/链接/Raw）。
 pub fn demo_sample() -> String {
-  "# md_mbt 编辑器演示\n" +
+  "# GpMark 编辑器演示\n" +
   "\n这是 **GPUI 后端** 的 MoonBit *Markdown* WYSIWYG 核心。\n" +
   "直接键入编辑，Cmd+Z 撤销，点击任意文字处定位光标。\n" +
   "\n## 列表与任务\n" +
@@ -539,7 +539,7 @@ pub fn demo_sample() -> String {
   "2. 有序二\n" +
   "- [x] 已完成任务\n" +
   "- [ ] 待办任务\n" +
-  "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.dev) 都在同一段里。\n" +
+  "\n> 引用块：**粗体**、`代码`、[链接](https://moonbitlang.com) 都在同一段里。\n" +
   "\n```moonbit\nfn greet(name : String) -> String {\n  \"hello \" + name\n}\n```\n" +
   "\n## 表格\n" +
   "| 层 | 角色 | 说明 |\n" +
@@ -547,7 +547,7 @@ pub fn demo_sample() -> String {
   "| core | 纯逻辑 | 块树 / 解析 / 编辑 / undo，零 FFI |\n" +
   "| adapter | 适配 | 块树 → gpui 节点树 + 事件回灌 |\n" +
   "| main | 装配 | 链接 Rust staticlib，进入事件循环 |\n" +
-  "\n![moon](moon.png)\n" +
+  "\n![moui](https://raw.githubusercontent.com/wzzc-dev/MoUI/main/resource/branding/moonbud-mascot-100.png)\n" +
   "\n---\n" +
   "\n<div class=\"raw-block\">不在稳定子集的语法保留为原样块，导出时零损失。</div>\n"
 }
@@ -1023,6 +1023,10 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
     cb.add_child()
   }
   set_preedit(preedit.val) // 组词文本随光标内联渲染（render 的光标覆盖层）
+  // 图片相对路径的基准目录跟着当前文档走。在 rebuild 里派生而不是在
+  // open_path/save 各自维护，是因为「文档换没换」的真相只有 current_file
+  // 一处：新建/demo 清空它，另存成功后写入它，这里读到的永远是最新值。
+  set_image_base_dir(image_base_dir_of(current_file.val))
   render_doc_window(
     cb,
     ed.blocks,

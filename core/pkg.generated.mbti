@@ -1,0 +1,273 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "mdmbt/core"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn block_is_atomic(Block) -> Bool
+
+pub fn block_plain(Block) -> String
+
+pub fn collapsed_sel(Caret) -> Sel
+
+pub fn collect_units(Array[Block]) -> Array[UnitRef]
+
+pub fn concat_str(Array[String]) -> String
+
+pub fn count_units_of(Block) -> Int
+
+pub fn doc_apply_enter_rules(Array[Block], Sel) -> (Array[Block], Sel)?
+
+pub fn doc_apply_space_rule(Array[Block], Sel) -> (Array[Block], Sel, Bool)
+
+pub fn doc_backspace(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn doc_block_op(Array[Block], Sel, BlockOp) -> (Array[Block], Sel)
+
+pub fn doc_code_escape(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn doc_cycle_code_lang(Array[Block], Sel, Array[String]) -> (Array[Block], Sel)
+
+pub fn doc_delete(Array[Block], Sel) -> (Array[Block], Caret)
+
+pub fn doc_delete_forward(Array[Block], Caret) -> (Array[Block], Sel)
+
+pub fn doc_ensure(Array[Block]) -> Array[Block]
+
+pub fn doc_ensure_trailing(Array[Block]) -> Array[Block]
+
+pub fn doc_enter(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn doc_indent(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn doc_insert(Array[Block], Sel, String) -> (Array[Block], Sel)
+
+pub fn doc_move(Array[Block], Sel, Dir, Bool) -> Sel
+
+pub fn doc_move_word(Array[Block], Sel, Dir, Bool) -> Sel
+
+pub fn doc_outdent(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn doc_paste(Array[Block], Sel, String) -> (Array[Block], Sel)
+
+pub fn doc_select_all(Array[Block]) -> Sel
+
+pub fn doc_selection_text(Array[Block], Sel) -> String
+
+pub fn doc_table_add_row(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn doc_table_delete_row(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn doc_toggle_mark(Array[Block], Sel, (Marks) -> Marks) -> (Array[Block], Sel)
+
+pub fn doc_toggle_task(Array[Block], Sel) -> (Array[Block], Sel)
+
+pub fn ends_with_str(String, String) -> Bool
+
+pub fn inline_plain(Inline) -> String
+
+pub fn inline_src(Array[Inline]) -> String
+
+pub fn inlines_concat(Array[Inline], Array[Inline]) -> Array[Inline]
+
+pub fn inlines_insert(Array[Inline], Int, Int, String, Marks) -> Array[Inline]
+
+pub fn inlines_len(Array[Inline]) -> Int
+
+pub fn inlines_marks_before(Array[Inline], Int) -> Marks
+
+pub fn inlines_plain(Array[Inline]) -> String
+
+pub fn inlines_slice_plain(Array[Inline], Int, Int) -> String
+
+pub fn inlines_split_at(Array[Inline], Int) -> (Array[Inline], Array[Inline])
+
+pub fn inlines_toggle(Array[Inline], Int, Int, (Marks) -> Marks) -> Array[Inline]
+
+pub fn join_lines_str(Array[String]) -> String
+
+pub fn list_to_paragraphs(Array[Item]) -> Array[Block]
+
+pub fn locate_top_item(Array[Block], Int) -> (Int, Int, Int)?
+
+pub fn map_top_block(Array[Block], Int, (Block) -> Block?) -> Array[Block]
+
+pub fn normalize_inlines(Array[Inline]) -> Array[Inline]
+
+pub fn parse_blocks(Array[String]) -> Array[Block]
+
+pub fn parse_doc(String) -> Array[Block]
+
+pub fn parse_doc_deferred(String) -> Array[Block]
+
+pub fn parse_inline(String) -> Array[Inline]
+
+pub fn reparse_inlines(Array[Inline], Int) -> (Array[Inline], Int, Bool)
+
+pub fn reparse_trigger(String) -> Bool
+
+pub fn repeat_str(String, Int) -> String
+
+pub fn replace_all_str(String, StringView, String) -> String
+
+pub fn rule_at_plain(String, Int) -> SpaceRule?
+
+pub fn sel_end(Sel) -> Caret
+
+pub fn sel_start(Sel) -> Caret
+
+pub fn serialize_block(Block) -> String
+
+pub fn serialize_doc(Array[Block]) -> String
+
+pub fn splice_top(Array[Block], Int, Array[Block]) -> Array[Block]
+
+pub fn split_lines_str(String) -> Array[String]
+
+pub fn src_offset_map(Array[Inline]) -> Array[Int]
+
+pub fn starts_with_str(String, StringView) -> Bool
+
+pub fn total_units(Array[Block]) -> Int
+
+pub fn trim_str(String) -> String
+
+pub fn unit_at(Array[Block], Int) -> UnitRef?
+
+pub fn unit_plain_len(Array[Block], Int) -> Int
+
+pub fn unit_ref_at(Array[Block], Int) -> (Int, Int, UnitRef)?
+
+// Errors
+
+// Types and methods
+pub(all) enum Block {
+  Heading(Int, Array[Inline])
+  Paragraph(Array[Inline])
+  CodeBlock(String, String)
+  Quote(Array[Block])
+  ListBlock(ListKind, Array[Item])
+  TableBlock(Table)
+  ImageBlock(String, String)
+  Hr
+  Raw(String)
+} derive(Eq, @debug.Debug)
+pub fn Block::activate(Self) -> Self
+
+pub(all) enum BlockOp {
+  SetHeading(Int)
+  ToggleBullet
+  SetOrdered(Int)
+  SetTask
+}
+
+pub(all) struct Caret {
+  unit : Int
+  offset : Int
+} derive(Eq, @debug.Debug)
+pub fn Caret::cmp(Self, Self) -> Int
+
+pub(all) enum Dir {
+  Left
+  Right
+  Up
+  Down
+  Home
+  End
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Editor {
+  mut blocks : Array[Block]
+  mut sel : Sel
+  mut undo_stack : Array[Snapshot]
+  mut redo_stack : Array[Snapshot]
+  mut merge_key : String
+}
+pub fn Editor::apply(Self, (Array[Block], Sel) -> (Array[Block], Sel)) -> Unit
+pub fn Editor::apply_text(Self, String, (Array[Block], Sel) -> (Array[Block], Sel)) -> Unit
+pub fn Editor::can_redo(Self) -> Bool
+pub fn Editor::can_undo(Self) -> Bool
+pub fn Editor::new(Array[Block]) -> Self
+pub fn Editor::redo(Self) -> Unit
+pub fn Editor::set_sel(Self, Sel) -> Unit
+pub fn Editor::undo(Self) -> Unit
+
+pub(all) enum Inline {
+  Run(String, Marks)
+  Link(String, Array[Inline])
+  Image(String, String)
+  Footnote(String)
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Item {
+  checked : Bool?
+  content : Array[Inline]
+  children : Array[Block]
+} derive(Eq, @debug.Debug)
+
+pub(all) enum ListKind {
+  Bullet
+  Ordered(Int)
+  Task
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Marks {
+  bold : Bool
+  italic : Bool
+  strike : Bool
+  code : Bool
+} derive(Default, Eq, @debug.Debug)
+pub fn Marks::is_plain(Self) -> Bool
+pub fn Marks::union(Self, Self) -> Self
+
+pub(all) struct Sel {
+  anchor : Caret
+  focus : Caret
+} derive(Eq, @debug.Debug)
+pub fn Sel::collapsed(Self) -> Bool
+
+pub(all) struct Snapshot {
+  blocks : Array[Block]
+  sel : Sel
+} derive(Eq, @debug.Debug)
+
+pub(all) enum SpaceRule {
+  HLevel(Int)
+  BulletR
+  OrderedR(Int)
+  QuoteR
+  TaskR(Bool)
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Table {
+  rows : Array[Array[Array[Inline]]]
+  has_header : Bool
+} derive(Eq, @debug.Debug)
+
+pub(all) enum UnitKind {
+  ParagraphU
+  HeadingU(Int)
+  CodeU
+  ListItemU
+  CellU
+  QuoteU
+  AtomicU
+} derive(Eq, @debug.Debug)
+
+pub(all) struct UnitRef {
+  kind : UnitKind
+  plain : String
+  inlines : Array[Inline]
+  top_index : Int
+  is_block_start : Bool
+  set_inlines : (Array[Inline]) -> Array[Block]
+  set_plain : (String) -> Array[Block]
+  remove_self : (() -> Array[Block])?
+  split : (Int) -> (Array[Block], Int)?
+}
+
+// Type aliases
+
+// Traits

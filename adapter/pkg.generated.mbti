@@ -1,0 +1,114 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "mdmbt/adapter"
+
+import {
+  "mdmbt/core",
+  "nakake/gpui-bindings",
+}
+
+// Values
+pub fn block_fingerprint(@core.Block) -> UInt64
+
+pub fn box_id_of(Int) -> Int
+
+pub fn build_tree(Int) -> Result[Unit, Int]
+
+pub fn caret_at_point(Int, Int, Int, Int, Array[@core.UnitRef], (String) -> (Float, Float, Float, Float)?, (String, Float, Float) -> Int?) -> @core.Caret?
+
+pub fn cell_px(Array[Char], Float, Bool) -> Float
+
+pub fn char_w(Char) -> Float
+
+pub fn click_id_of(Int) -> Int
+
+pub fn clipboard_read() -> String
+
+pub fn clipboard_write(String) -> Unit
+
+pub fn count_units_of(@core.Block) -> Int
+
+pub fn current_path() -> String
+
+pub fn decode_mouse(Bytes) -> (Int, Int, Int)?
+
+pub fn demo_sample() -> String
+
+pub fn dispatch(Int, Int, Int, Int, Int) -> Int
+
+pub fn display_name() -> String
+
+pub fn dump() -> String
+
+pub let ed : @core.Editor
+
+pub fn estimate_slot_height(@core.Block, Float) -> Float
+
+pub fn image_base_dir_of(String) -> String
+
+pub fn inline_segments(Array[@core.Inline], Int, Int, Int) -> Array[(String, @gpui-bindings.RunStyle?)]
+
+pub fn is_wide(Char) -> Bool
+
+pub fn layout_text(Array[Char], Float, Float) -> Layout
+
+pub fn load(String) -> Unit
+
+pub fn open_path(String) -> Result[Unit, String]
+
+pub fn pick_file() -> String?
+
+pub fn pick_save_file() -> String?
+
+pub fn probe_part_key(Int, Int) -> String
+
+pub fn probe_rect(String) -> (Float, Float, Float, Float)?
+
+pub fn probe_tail_key(Int, Int) -> String
+
+pub fn rebuild(Int) -> Result[Unit, Int]
+
+pub fn render_doc(@gpui-bindings.CommandBuffer, Array[@core.Block], @core.Sel, (Int) -> Int, (Int) -> Int, (Int, Int) -> Int) -> Unit
+
+pub fn render_doc_window(@gpui-bindings.CommandBuffer, Array[@core.Block], Int, Int, Int, @core.Sel, (Int) -> Int, (Int) -> Int, (Int, Int) -> Int) -> Unit
+
+pub fn render_top_bar(@gpui-bindings.CommandBuffer, String, (Int) -> Int) -> Unit
+
+pub fn resolve_image_source(String) -> String
+
+pub fn run_headless_benchmark(String, String) -> Unit
+
+pub fn run_ui_benchmark(String, String, Double, Double) -> Unit
+
+pub fn save_current_file() -> Result[Unit, String]
+
+pub fn set_image_base_dir(String) -> Unit
+
+pub fn set_preedit(String) -> Unit
+
+pub fn set_viewport_height(Float) -> Unit
+
+pub let store : @gpui-bindings.Store
+
+pub fn tok_px(Array[Char], Int, Int, Float) -> Float
+
+pub fn tok_starts_of(Int) -> Array[Int]
+
+pub fn token_click_id_of(Int, Int) -> Int
+
+pub fn tokenize(Array[Char]) -> Array[(Int, Int)]
+
+// Errors
+
+// Types and methods
+pub struct Layout {
+  toks : Array[(Int, Int)]
+  widths : Array[Float]
+  rows : Array[Array[Int]]
+}
+
+// Type aliases
+pub type Seg = (String, @gpui-bindings.RunStyle?)
+
+pub type Tok = (Int, Int)
+
+// Traits

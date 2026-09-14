@@ -91,6 +91,11 @@ let cache_block_units : Ref[Array[Int]] = { val: [] }
 let cache_fp : Ref[Array[UInt64]] = { val: [] }
 
 ///|
+/// 已激活块的指纹：激活（inline 物化）会改变块的结构指纹，按指纹记忆
+/// 化后，滚动重建只激活内容变化过的块，已激活块零成本跳过。
+let activated_fp : Ref[Array[UInt64]] = { val: [] }
+
+///|
 fn ensure_height_cache() -> Unit {
   let blocks = ed.blocks
   let n = blocks.length()
@@ -1006,8 +1011,19 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
   // pad 覆盖单步光标移动越窗的目标块。窗口外的块保持延迟形态。
   let pad_lo = (lo - WINDOW_ACTIVATE_PAD).max(0)
   let pad_hi = (hi + WINDOW_ACTIVATE_PAD).min(n)
+  if activated_fp.val.length() != n {
+    activated_fp.val = Array::make(n, 0UL)
+  }
   for i = pad_lo; i < pad_hi; i = i + 1 {
-    ed.blocks[i] = ed.blocks[i].activate()
+    // ensure_height_cache 刚算过当前块的指纹；与上次激活后的指纹一致
+    // 说明内容未变且已物化，跳过重复解析（否则每次滚动重建都要把
+    // 窗口内全部块重跑一遍 parse(inline_src)，滚动帧预算直接翻倍）。
+    if cache_fp.val.length() == n && activated_fp.val[i] == cache_fp.val[i] {
+      continue
+    }
+    let activated = ed.blocks[i].activate()
+    activated_fp.val[i] = block_fingerprint(activated)
+    ed.blocks[i] = activated
   }
   let cum = cache_cum.val
   let cb = @gpui.CommandBuffer::new()

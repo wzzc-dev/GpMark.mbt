@@ -3,7 +3,7 @@
 
 ///|
 pub fn parse_doc(src : String) -> Array[Block] {
-  parse_blocks(split_lines_str(src))
+  parse_blocks_impl(split_lines_view(src), deferred=false)
 }
 
 ///|
@@ -12,29 +12,80 @@ pub fn parse_doc(src : String) -> Array[Block] {
 /// plain = 原文使单元数、光标偏移空间、serialize 往返与即时解析形态
 /// 保持一致；渲染窗口内的块由 Block::activate 物化成真实 run。
 pub fn parse_doc_deferred(src : String) -> Array[Block] {
-  parse_blocks_impl(split_lines_str(src), deferred=true)
+  parse_blocks_impl(split_lines_view(src), deferred=true)
 }
 
 ///|
-/// 单个叶子内容的 inline 构造：defer 时原文就是一个 plain Run，
+/// 单个叶子内容的 inline 构造：defer 时原文成为一个 plain Run，
 /// plain 语义与解析结果一致（inline_src(plain run) = 原文，幂等）。
-fn inlines_of(src : String, deferred~ : Bool) -> Array[Inline] {
+fn inlines_of(src : StringView, deferred~ : Bool) -> Array[Inline] {
   if deferred {
-    [Run(src, Marks::default())]
+    [Run(src.to_owned(), Marks::default())]
   } else {
-    parse_inline(src)
+    parse_inline(src.to_owned())
   }
 }
 
 ///|
-fn blank(line : String) -> Bool {
+/// 视图切片 + 单趟 trim 的单次拷贝：取代 sub().to_owned().trim()
+/// .to_owned() 的双重拷贝（marker rest / 标题文本 / fence info）。
+fn sub_trimmed(t : StringView, start~ : Int) -> String {
+  sub_trimmed_range(t, start~, end=t.length())
+}
+
+///|
+fn sub_trimmed_range(t : StringView, start~ : Int, end~ : Int) -> String {
+  let n = end
+  let mut lo = start
+  while lo < n && {
+    let c = t.get_char(lo).unwrap_or(' ')
+    c == ' ' || c == '\t'
+  } {
+    lo = lo + 1
+  }
+  let mut hi = n
+  while hi > lo && {
+    let c = t.get_char(hi - 1).unwrap_or(' ')
+    c == ' ' || c == '\t'
+  } {
+    hi = hi - 1
+  }
+  t.sub(start=lo, end=hi).to_owned()
+}
+
+///|
+/// 软换行段落的叶子内容：defer 时按空格连接直接物化单个 plain Run
+/// （\n→空格 归一与连接合为一趟拷贝，取代 join+replace+owned 三趟）。
+fn paragraph_inlines_of_views(
+  body : Array[StringView],
+  deferred~ : Bool,
+) -> Array[Inline] {
+  if deferred {
+    let b = StringBuilder()
+    let mut first = true
+    for v in body {
+      if first {
+        first = false
+      } else {
+        b.write_char(' ')
+      }
+      append_view(b, v)
+    }
+    [Run(b.to_string(), Marks::default())]
+  } else {
+    inlines_of(join_views_spaced(body), deferred~)
+  }
+}
+
+///|
+fn blank(line : StringView) -> Bool {
   // 无分配：trim 返回 view，逐行判定的分配是大文档打开的主要成本。
   line.trim().length() == 0
 }
 
 ///|
 ///|
-fn indent_of(line : String) -> Int {
+fn indent_of(line : StringView) -> Int {
   let mut n = 0
   for c in line {
     match c {
@@ -47,7 +98,7 @@ fn indent_of(line : String) -> Int {
 }
 
 ///|
-fn is_heading(line : String) -> Int? {
+fn is_heading(line : StringView) -> Int? {
   let t = line.trim()
   let len = t.length()
   let mut n = 0
@@ -62,7 +113,7 @@ fn is_heading(line : String) -> Int? {
 }
 
 ///|
-fn heading_text(line : String) -> String {
+fn heading_text(line : StringView) -> String {
   let t = line.trim()
   let len = t.length()
   let mut n = 0
@@ -70,14 +121,14 @@ fn heading_text(line : String) -> String {
     n = n + 1
   }
   if n >= 1 && n <= len {
-    t.sub(start=n, end=len).to_owned().trim().to_owned()
+    sub_trimmed(t, start=n)
   } else {
     t.to_owned()
   }
 }
 
 ///|
-fn is_hr(line : String) -> Bool {
+fn is_hr(line : StringView) -> Bool {
   // 语义与旧实现一致：trim 后忽略空格，其余字符须全部同为你 -/*/_
   // 之一（内部制表符不等价于空格，保持原判定）。
   let t = line.trim()
@@ -104,37 +155,37 @@ fn is_hr(line : String) -> Bool {
 }
 
 ///|
-fn fence_lang(line : String) -> String? {
+fn fence_lang(line : StringView) -> String? {
   let t = line.trim()
   if t.length() >= 3 &&
     t.get_char(0).unwrap_or(' ') == '`' &&
     t.get_char(1).unwrap_or(' ') == '`' &&
     t.get_char(2).unwrap_or(' ') == '`' {
-    Some(t.sub(start=3, end=t.length()).to_owned().trim().to_owned())
+    Some(sub_trimmed(t, start=3))
   } else {
     None
   }
 }
 
 ///|
-fn is_fence_close(line : String) -> Bool {
+fn is_fence_close(line : StringView) -> Bool {
   line.trim() == "```"
 }
 
 ///|
-fn is_quote(line : String) -> Bool {
+fn is_quote(line : StringView) -> Bool {
   let t = line.trim()
   t.length() > 0 && t.get_char(0).unwrap_or(' ') == '>'
 }
 
 ///|
-fn strip_quote(line : String) -> String {
+fn strip_quote(line : StringView) -> String {
   let t = line.trim()
-  let rest = t.sub(start=1, end=t.length()).to_owned()
-  if rest.has_prefix(" ") {
-    rest.substring(start=1)
+  let rest = t.sub(start=1, end=t.length())
+  if rest.length() > 0 && rest.get_char(0).unwrap_or(' ') == ' ' {
+    rest.sub(start=1, end=rest.length()).to_owned()
   } else {
-    rest
+    rest.to_owned()
   }
 }
 
@@ -151,7 +202,7 @@ fn task_marker_char(c : Char) -> Bool {
 }
 
 ///|
-fn parse_marker(line : String) -> Marker? {
+fn parse_marker(line : StringView) -> Marker? {
   let ind = indent_of(line)
   if ind >= 4 {
     return None
@@ -170,13 +221,13 @@ fn parse_marker(line : String) -> Marker? {
     return Some(Marker::{
       ordered_start: None,
       checked: Some(at(3) != ' '),
-      rest: t.sub(start=6, end=n).to_owned().trim().to_owned(),
+      rest: sub_trimmed(t, start=6),
     })
   }
   // 无序 -
   if n >= 1 && at(0) == '-' && !is_hr(line) && (n == 1 || at(1) == ' ') {
     let rest = if n >= 2 {
-      t.sub(start=2, end=n).to_owned().trim().to_owned()
+      sub_trimmed(t, start=2)
     } else {
       ""
     }
@@ -190,7 +241,7 @@ fn parse_marker(line : String) -> Marker? {
     return Some(Marker::{
       ordered_start: None,
       checked: None,
-      rest: t.sub(start=2, end=n).to_owned().trim().to_owned(),
+      rest: sub_trimmed(t, start=2),
     })
   }
   // 有序 N. / N)
@@ -199,11 +250,11 @@ fn parse_marker(line : String) -> Marker? {
     d = d + 1
   }
   if d >= 1 && d + 1 < n && (at(d) == '.' || at(d) == ')') && at(d + 1) == ' ' {
-    let p = parse_int(t.sub(start=0, end=d).to_owned())
+    let p = parse_int(t.sub(start=0, end=d))
     return Some(Marker::{
       ordered_start: Some(if p == 0 { 1 } else { p }),
       checked: None,
-      rest: t.sub(start=d + 2, end=n).to_owned().trim().to_owned(),
+      rest: sub_trimmed(t, start=d + 2),
     })
   }
   None
@@ -215,9 +266,9 @@ fn is_digit(c : Char) -> Bool {
 }
 
 ///|
-fn parse_int(s : String) -> Int {
+fn parse_int(s : StringView) -> Int {
   let mut v = 0
-  for c in s.to_array() {
+  for c in s {
     if is_digit(c) {
       v = v * 10 + (c.to_int() - '0'.to_int())
     }
@@ -226,42 +277,65 @@ fn parse_int(s : String) -> Int {
 }
 
 ///|
-fn is_table_sep(line : String) -> Bool {
-  let t = line.trim()
-  if !t.contains("|") || !t.contains("-") {
-    return false
-  }
-  for ch in t {
-    if !(ch == '|' || ch == '-' || ch == ':' || ch == ' ') {
+fn is_table_sep(line : StringView) -> Bool {
+  let mut has_pipe = false
+  let mut has_dash = false
+  for ch in line.trim() {
+    if ch == '|' {
+      has_pipe = true
+    } else if ch == '-' {
+      has_dash = true
+    } else if !(ch == ':' || ch == ' ') {
       return false
     }
   }
-  true
+  has_pipe && has_dash
 }
 
 ///|
-fn is_table_row(line : String) -> Bool {
-  !blank(line) && line.contains("|")
+fn is_table_row(line : StringView) -> Bool {
+  if blank(line) {
+    return false
+  }
+  let mut has_pipe = false
+  for ch in line {
+    if ch == '|' {
+      has_pipe = true
+      break
+    }
+  }
+  has_pipe
 }
 
 ///|
-fn split_cells(line : String) -> Array[String] {
-  let mut t = trim_str(line)
-  if starts_with_str(t, "|") {
-    t = t[1:].to_owned()
+fn split_cells(line : StringView) -> Array[StringView] {
+  let t = line.trim()
+  let lo = if t.length() > 0 && t.get_char(0).unwrap_or(' ') == '|' {
+    1
+  } else {
+    0
   }
-  if ends_with_str(t, "|") {
-    t = t[:t.length() - 1].to_owned()
+  let hi = if t.length() > lo && t.get_char(t.length() - 1).unwrap_or(' ') == '|' {
+    t.length() - 1
+  } else {
+    t.length()
   }
-  let out : Array[String] = []
-  for sv in t.split("|") {
-    out.push(trim_str(sv.to_owned()))
+  let out : Array[StringView] = []
+  let mut start = lo
+  let mut i = lo
+  while i < hi {
+    if t.get_char(i).unwrap_or(' ') == '|' {
+      out.push(sub_trimmed_range(t, start~, end=i))
+      start = i + 1
+    }
+    i = i + 1
   }
+  out.push(sub_trimmed_range(t, start~, end=hi))
   out
 }
 
 ///|
-fn is_block_start(line : String) -> Bool {
+fn is_block_start(line : StringView) -> Bool {
   is_heading(line) is Some(_) ||
   fence_lang(line) is Some(_) ||
   is_hr(line) ||
@@ -270,8 +344,8 @@ fn is_block_start(line : String) -> Bool {
 }
 
 ///|
-fn dedent(lines : Array[String], n : Int) -> Array[String] {
-  let out : Array[String] = []
+fn dedent(lines : Array[StringView], n : Int) -> Array[StringView] {
+  let out : Array[StringView] = []
   for l in lines {
     out.push(dedent_line(l, n))
   }
@@ -279,16 +353,16 @@ fn dedent(lines : Array[String], n : Int) -> Array[String] {
 }
 
 ///|
-fn dedent_line(line : String, n : Int) -> String {
+fn dedent_line(line : StringView, n : Int) -> StringView {
   if indent_of(line) >= n {
-    line[n:].to_owned()
+    line.sub(start=n, end=line.length())
   } else {
-    trim_str(line)
+    line.trim()
   }
 }
 
 ///|
-fn first_trim_char(line : String) -> Char? {
+fn first_trim_char(line : StringView) -> Char? {
   let t = line.trim()
   if t.length() > 0 {
     Some(t.get_char(0).unwrap_or(' '))
@@ -311,11 +385,15 @@ fn _cells_inline(cells : Array[String]) -> Array[Inline] {
 ///|
 /// Markdown 块解析。
 pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
-  parse_blocks_impl(lines, deferred=false)
+  let views : Array[StringView] = []
+  for l in lines {
+    views.push(l)
+  }
+  parse_blocks_impl(views, deferred=false)
 }
 
 ///|
-fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
+fn parse_blocks_impl(lines : Array[StringView], deferred~ : Bool) -> Array[Block] {
   let n = lines.length()
   let out : Array[Block] = []
   let mut i = 0
@@ -338,18 +416,18 @@ fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
           j = j + 1
         }
         if closed {
-          let body : Array[String] = []
+          let body : Array[StringView] = []
           for k = i + 1; k < j; k = k + 1 {
             body.push(lines[k])
           }
-          out.push(CodeBlock(lang, join_lines_str(body)))
+          out.push(CodeBlock(lang, join_views_str(body, "\n")))
           i = j + 1
         } else {
-          let body : Array[String] = []
+          let body : Array[StringView] = []
           for k = i; k < n; k = k + 1 {
             body.push(lines[k])
           }
-          out.push(Raw(join_lines_str(body)))
+          out.push(Raw(join_views_str(body, "\n")))
           i = n
         }
         continue
@@ -372,7 +450,7 @@ fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
     }
     if is_quote(line) {
       let mut j = i
-      let inner : Array[String] = []
+      let inner : Array[StringView] = []
       while j < n && is_quote(lines[j]) {
         inner.push(strip_quote(lines[j]))
         j = j + 1
@@ -384,12 +462,12 @@ fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
     // HTML 块 → Raw
     if indent_of(line) < 4 && first_trim_char(line) == Some('<') {
       let mut j = i
-      let body : Array[String] = []
+      let body : Array[StringView] = []
       while j < n && !blank(lines[j]) {
         body.push(lines[j])
         j = j + 1
       }
-      out.push(Raw(join_lines_str(body)))
+      out.push(Raw(join_views_str(body, "\n")))
       i = j
       continue
     }
@@ -415,14 +493,14 @@ fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
     }
     // 独占一行的图片
     if is_standalone_image(line) {
-      let (alt, url) = parse_image_target(trim_str(line))
+      let (alt, url) = parse_image_target(line.trim())
       out.push(ImageBlock(alt, url))
       i = i + 1
       continue
     }
     // 段落
     let mut j = i
-    let body : Array[String] = []
+    let body : Array[StringView] = []
     while j < n && !blank(lines[j]) && !is_block_start(lines[j]) {
       body.push(lines[j])
       j = j + 1
@@ -433,7 +511,7 @@ fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
     }
     out.push(
       Paragraph(
-        inlines_of(replace_all_str(join_lines_str(body), "\n", " "), deferred~),
+        paragraph_inlines_of_views(body, deferred~),
       ),
     )
     i = j
@@ -444,7 +522,7 @@ fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
 // 一行表格 → 每格一组 inline
 
 ///|
-fn cells_row(cells : Array[String], deferred~ : Bool) -> Array[Array[Inline]] {
+fn cells_row(cells : Array[StringView], deferred~ : Bool) -> Array[Array[Inline]] {
   let out : Array[Array[Inline]] = []
   for c in cells {
     out.push(inlines_of(c, deferred~))
@@ -453,48 +531,53 @@ fn cells_row(cells : Array[String], deferred~ : Bool) -> Array[Array[Inline]] {
 }
 
 ///|
-fn is_standalone_image(line : String) -> Bool {
-  let t = trim_str(line)
+fn is_standalone_image(line : StringView) -> Bool {
+  let t = line.trim()
+  let n = t.length()
   let target = parse_image_target(t)
-  starts_with_str(t, "![") && ends_with_str(t, ")") && target.1 != ""
+  n >= 2 &&
+  t.get_char(0).unwrap_or(' ') == '!' &&
+  t.get_char(1).unwrap_or(' ') == '[' &&
+  t.get_char(n - 1).unwrap_or(' ') == ')' &&
+  target.1 != ""
 }
 
 ///|
-fn parse_image_target(s : String) -> (String, String) {
-  let cs = s.to_array()
-  let n = cs.length()
-  if n < 5 || cs[0] != '!' || cs[1] != '[' {
+fn parse_image_target(s : StringView) -> (String, String) {
+  let n = s.length()
+  let at = fn(i : Int) -> Char { s.get_char(i).unwrap_or(' ') }
+  if n < 5 || at(0) != '!' || at(1) != '[' {
     return ("", "")
   }
   let mut i = 2
-  let mut alt = ""
+  let alt = StringBuilder()
   let mut found_alt = false
   while i < n {
-    if cs[i] == ']' {
+    if at(i) == ']' {
       found_alt = true
       break
     }
-    alt = alt + cs[i].to_string()
+    alt.write_char(at(i))
     i = i + 1
   }
-  if !found_alt || i + 1 >= n || cs[i + 1] != '(' {
+  if !found_alt || i + 1 >= n || at(i + 1) != '(' {
     return ("", "")
   }
   i = i + 2
-  let mut url = ""
+  let url = StringBuilder()
   let mut found_url = false
   while i < n {
-    if cs[i] == ')' {
+    if at(i) == ')' {
       found_url = true
       break
     }
-    url = url + cs[i].to_string()
+    url.write_char(at(i))
     i = i + 1
   }
   if !found_url || i != n - 1 {
     return ("", "")
   }
-  (alt, url)
+  (alt.to_string(), url.to_string())
 }
 
 ///|
@@ -510,7 +593,7 @@ fn marker_same_list(a : Marker, b : Marker) -> Bool {
 }
 
 ///|
-fn parse_list(lines : Array[String], start : Int, deferred~ : Bool) -> (Block, Int) {
+fn parse_list(lines : Array[StringView], start : Int, deferred~ : Bool) -> (Block, Int) {
   let n = lines.length()
   let first_m = match parse_marker(lines[start]) {
     Some(m) => m
@@ -545,9 +628,9 @@ fn parse_list(lines : Array[String], start : Int, deferred~ : Bool) -> (Block, I
         if m.checked is Some(_) {
           any_task = true
         }
-        let content_text : Array[String] = [m.rest]
+        let content_text : Array[StringView] = [m.rest]
         let mut j = i + 1
-        let cont_or_child : Array[String] = []
+        let cont_or_child : Array[StringView] = []
         while j < n {
           if blank(lines[j]) {
             let mut k = j
@@ -569,7 +652,7 @@ fn parse_list(lines : Array[String], start : Int, deferred~ : Bool) -> (Block, I
           break
         }
         // 缩进行：首个 marker 之前的非块行并入本项文本，其余进子块
-        let tail : Array[String] = []
+        let tail : Array[StringView] = []
         let mut ci = 0
         let cn = cont_or_child.length()
         while ci < cn {
@@ -580,7 +663,7 @@ fn parse_list(lines : Array[String], start : Int, deferred~ : Bool) -> (Block, I
               ci = ci + 1
             }
           } else {
-            content_text.push(trim_str(cont_or_child[ci]))
+            content_text.push(cont_or_child[ci].trim())
             ci = ci + 1
           }
         }
@@ -591,10 +674,7 @@ fn parse_list(lines : Array[String], start : Int, deferred~ : Bool) -> (Block, I
         }
         items.push(Item::{
           checked: m.checked,
-          content: inlines_of(
-            replace_all_str(join_lines_str(content_text), "\n", " "),
-            deferred~,
-          ),
+          content: paragraph_inlines_of_views(content_text, deferred~),
           children,
         })
         i = j

@@ -75,6 +75,62 @@ pub fn split_lines_str(s : String) -> Array[String] {
 }
 
 ///|
+/// 零拷贝行视图切分：解析管线的行扫描用。每行一个 view（不物化 owned
+/// 字符串）——24 万行的 owned 化是大文档结构扫描的主要分配源。切分
+/// 边界都在 \n / \r 上（BMP），不会切开代理对。
+pub fn split_lines_view(s : String) -> Array[StringView] {
+  let out : Array[StringView] = []
+  if s == "" {
+    return out
+  }
+  let n = s.length()
+  let mut start = 0
+  let mut unit = 0
+  let mut prev_is_cr = false
+  for ch in s {
+    if ch == '\n' {
+      let end = if prev_is_cr && unit > start { unit - 1 } else { unit }
+      out.push(s.sub(start=start, end=end))
+      prev_is_cr = false
+      start = unit + 1
+    } else {
+      prev_is_cr = ch == '\r'
+    }
+    unit = unit + ch.utf16_len()
+  }
+  if start < n {
+    let end = if prev_is_cr && n > start { n - 1 } else { n }
+    out.push(s.sub(start=start, end=end))
+  }
+  out
+}
+
+///|
+/// 把 StringView 追加进 StringBuilder（不物化中间字符串）。
+fn append_view(b : StringBuilder, v : StringView) -> Unit {
+  for ch in v {
+    b.write_char(ch)
+  }
+}
+
+///|
+/// 行视图按空格连接为单个 owned 字符串（单次拷贝）：软换行段落的
+/// \n→空格 归一与连接合为一趟，取代 join+replace_all 的两趟拷贝。
+fn join_views_spaced(parts : Array[StringView]) -> String {
+  let b = StringBuilder()
+  let mut first = true
+  for v in parts {
+    if first {
+      first = false
+    } else {
+      b.write_char(' ')
+    }
+    append_view(b, v)
+  }
+  b.to_string()
+}
+
+///|
 pub fn join_lines_str(lines : Array[String]) -> String {
   lines.join("\n")
 }
@@ -100,4 +156,19 @@ fn repeat_arr_str(s : String, n : Int) -> Array[String] {
     out.push(s)
   }
   out
+}
+
+///|
+pub fn join_views_str(parts : Array[StringView], sep : String) -> String {
+  let b = StringBuilder()
+  let mut first = true
+  for v in parts {
+    if first {
+      first = false
+    } else {
+      b.write_string(sep)
+    }
+    append_view(b, v)
+  }
+  b.to_string()
 }

@@ -28,6 +28,7 @@ fn main {
       source,
       args[3],
       (now_ms() - load_started).max(0.0),
+      load_started,
     )
     return
   }

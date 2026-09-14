@@ -7,14 +7,36 @@ pub fn parse_doc(src : String) -> Array[Block] {
 }
 
 ///|
-fn blank(line : String) -> Bool {
-  trim_str(line) == ""
+/// 打开路径的延迟解析：块边界与 parse_doc 完全一致，但叶子内容（段落/
+/// 标题/列表项/表格单元格）不解析 inline，用单个 plain Run 承载原文。
+/// plain = 原文使单元数、光标偏移空间、serialize 往返与即时解析形态
+/// 保持一致；渲染窗口内的块由 Block::activate 物化成真实 run。
+pub fn parse_doc_deferred(src : String) -> Array[Block] {
+  parse_blocks_impl(split_lines_str(src), deferred=true)
 }
 
 ///|
+/// 单个叶子内容的 inline 构造：defer 时原文就是一个 plain Run，
+/// plain 语义与解析结果一致（inline_src(plain run) = 原文，幂等）。
+fn inlines_of(src : String, deferred~ : Bool) -> Array[Inline] {
+  if deferred {
+    [Run(src, Marks::default())]
+  } else {
+    parse_inline(src)
+  }
+}
+
+///|
+fn blank(line : String) -> Bool {
+  // 无分配：trim 返回 view，逐行判定的分配是大文档打开的主要成本。
+  line.trim().length() == 0
+}
+
+///|
+///|
 fn indent_of(line : String) -> Int {
   let mut n = 0
-  for c in line.to_array() {
+  for c in line {
     match c {
       ' ' => n = n + 1
       '\t' => n = n + 4
@@ -26,20 +48,13 @@ fn indent_of(line : String) -> Int {
 
 ///|
 fn is_heading(line : String) -> Int? {
-  let t = trim_str(line)
-  let cs = t.to_array()
-  if cs.length() == 0 || cs[0] != '#' {
-    return None
-  }
+  let t = line.trim()
+  let len = t.length()
   let mut n = 0
-  for c in cs {
-    if c == '#' {
-      n = n + 1
-    } else {
-      break
-    }
+  while n < len && t.get_char(n).unwrap_or(' ') == '#' {
+    n = n + 1
   }
-  if n >= 1 && n <= 6 && (cs.length() == n || cs[n] == ' ') {
+  if n >= 1 && n <= 6 && (len == n || t.get_char(n).unwrap_or(' ') == ' ') {
     Some(n)
   } else {
     None
@@ -48,47 +63,54 @@ fn is_heading(line : String) -> Int? {
 
 ///|
 fn heading_text(line : String) -> String {
-  let t = trim_str(line)
-  let cs = t.to_array()
+  let t = line.trim()
+  let len = t.length()
   let mut n = 0
-  for c in cs {
-    if c == '#' {
-      n = n + 1
-    } else {
-      break
-    }
+  while n < len && t.get_char(n).unwrap_or(' ') == '#' {
+    n = n + 1
   }
-  if n >= 1 && n <= cs.length() {
-    trim_str(String::from_array(cs[n:]))
+  if n >= 1 && n <= len {
+    t.sub(start=n, end=len).to_owned().trim().to_owned()
   } else {
-    t
+    t.to_owned()
   }
-}
-
-///|
-fn all_char(s : String, c : Char) -> Bool {
-  if s.length() == 0 {
-    return false
-  }
-  for ch in s.to_array() {
-    if ch != c {
-      return false
-    }
-  }
-  true
 }
 
 ///|
 fn is_hr(line : String) -> Bool {
-  let t = replace_all_str(trim_str(line), " ", "")
-  t.length() >= 3 && (all_char(t, '-') || all_char(t, '*') || all_char(t, '_'))
+  // 语义与旧实现一致：trim 后忽略空格，其余字符须全部同为你 -/*/_
+  // 之一（内部制表符不等价于空格，保持原判定）。
+  let t = line.trim()
+  let mut n = 0
+  let mut c0 : Char? = None
+  for ch in t {
+    if ch == ' ' {
+      continue
+    }
+    match c0 {
+      None => {
+        c0 = Some(ch)
+        n = 1
+      }
+      Some(c) =>
+        if ch != c {
+          return false
+        } else {
+          n = n + 1
+        }
+    }
+  }
+  n >= 3 && c0 is Some('-'|'*'|'_')
 }
 
 ///|
 fn fence_lang(line : String) -> String? {
-  let t = trim_str(line)
-  if starts_with_str(t, "```") {
-    Some(trim_str(t[3:].to_owned()))
+  let t = line.trim()
+  if t.length() >= 3 &&
+    t.get_char(0).unwrap_or(' ') == '`' &&
+    t.get_char(1).unwrap_or(' ') == '`' &&
+    t.get_char(2).unwrap_or(' ') == '`' {
+    Some(t.sub(start=3, end=t.length()).to_owned().trim().to_owned())
   } else {
     None
   }
@@ -96,20 +118,21 @@ fn fence_lang(line : String) -> String? {
 
 ///|
 fn is_fence_close(line : String) -> Bool {
-  trim_str(line) == "```"
+  line.trim() == "```"
 }
 
 ///|
 fn is_quote(line : String) -> Bool {
-  starts_with_str(trim_str(line), ">")
+  let t = line.trim()
+  t.length() > 0 && t.get_char(0).unwrap_or(' ') == '>'
 }
 
 ///|
 fn strip_quote(line : String) -> String {
-  let t = trim_str(line)
-  let rest = t[1:].to_owned()
-  if starts_with_str(rest, " ") {
-    rest[1:].to_owned()
+  let t = line.trim()
+  let rest = t.sub(start=1, end=t.length()).to_owned()
+  if rest.has_prefix(" ") {
+    rest.substring(start=1)
   } else {
     rest
   }
@@ -133,51 +156,54 @@ fn parse_marker(line : String) -> Marker? {
   if ind >= 4 {
     return None
   }
-  let t = trim_str(line)
-  let cs = t.to_array()
-  let n = cs.length()
+  let t = line.trim()
+  let n = t.length()
+  let at = fn(i : Int) -> Char { t.get_char(i).unwrap_or(' ') }
   // 任务 - [ ] / - [x]
-  let task_ok = n >= 6 &&
-    cs[0] == '-' &&
-    cs[1] == ' ' &&
-    cs[2] == '[' &&
-    cs[4] == ']' &&
-    cs[5] == ' ' &&
-    task_marker_char(cs[3])
-  if task_ok {
+  if n >= 6 &&
+    at(0) == '-' &&
+    at(1) == ' ' &&
+    at(2) == '[' &&
+    at(4) == ']' &&
+    at(5) == ' ' &&
+    task_marker_char(at(3)) {
     return Some(Marker::{
       ordered_start: None,
-      checked: Some(cs[3] != ' '),
-      rest: trim_str(t[6:].to_owned()),
+      checked: Some(at(3) != ' '),
+      rest: t.sub(start=6, end=n).to_owned().trim().to_owned(),
     })
   }
   // 无序 -
-  if n >= 1 && cs[0] == '-' && !is_hr(line) && (n == 1 || cs[1] == ' ') {
-    let rest = if n >= 2 { trim_str(t[2:].to_owned()) } else { "" }
+  if n >= 1 && at(0) == '-' && !is_hr(line) && (n == 1 || at(1) == ' ') {
+    let rest = if n >= 2 {
+      t.sub(start=2, end=n).to_owned().trim().to_owned()
+    } else {
+      ""
+    }
     return Some(Marker::{ ordered_start: None, checked: None, rest })
   }
   // 无序 * / +（* 需排除 hr）
   if n >= 2 &&
-    (cs[0] == '*' || cs[0] == '+') &&
-    cs[1] == ' ' &&
-    !(cs[0] == '*' && is_hr(line)) {
+    (at(0) == '*' || at(0) == '+') &&
+    at(1) == ' ' &&
+    !(at(0) == '*' && is_hr(line)) {
     return Some(Marker::{
       ordered_start: None,
       checked: None,
-      rest: trim_str(t[2:].to_owned()),
+      rest: t.sub(start=2, end=n).to_owned().trim().to_owned(),
     })
   }
   // 有序 N. / N)
   let mut d = 0
-  while d < n && is_digit(cs[d]) {
+  while d < n && is_digit(at(d)) {
     d = d + 1
   }
-  if d >= 1 && d + 1 < n && (cs[d] == '.' || cs[d] == ')') && cs[d + 1] == ' ' {
-    let p = parse_int(String::from_array(cs[0:d]))
+  if d >= 1 && d + 1 < n && (at(d) == '.' || at(d) == ')') && at(d + 1) == ' ' {
+    let p = parse_int(t.sub(start=0, end=d).to_owned())
     return Some(Marker::{
       ordered_start: Some(if p == 0 { 1 } else { p }),
       checked: None,
-      rest: trim_str(t[d + 2:].to_owned()),
+      rest: t.sub(start=d + 2, end=n).to_owned().trim().to_owned(),
     })
   }
   None
@@ -201,18 +227,16 @@ fn parse_int(s : String) -> Int {
 
 ///|
 fn is_table_sep(line : String) -> Bool {
-  let t = trim_str(line)
+  let t = line.trim()
   if !t.contains("|") || !t.contains("-") {
     return false
   }
-  let mut ok = true
-  for ch in t.to_array() {
+  for ch in t {
     if !(ch == '|' || ch == '-' || ch == ':' || ch == ' ') {
-      ok = false
-      break
+      return false
     }
   }
-  ok
+  true
 }
 
 ///|
@@ -265,9 +289,9 @@ fn dedent_line(line : String, n : Int) -> String {
 
 ///|
 fn first_trim_char(line : String) -> Char? {
-  let cs = trim_str(line).to_array()
-  if cs.length() > 0 {
-    Some(cs[0])
+  let t = line.trim()
+  if t.length() > 0 {
+    Some(t.get_char(0).unwrap_or(' '))
   } else {
     None
   }
@@ -287,6 +311,11 @@ fn _cells_inline(cells : Array[String]) -> Array[Inline] {
 ///|
 /// Markdown 块解析。
 pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
+  parse_blocks_impl(lines, deferred=false)
+}
+
+///|
+fn parse_blocks_impl(lines : Array[String], deferred~ : Bool) -> Array[Block] {
   let n = lines.length()
   let out : Array[Block] = []
   let mut i = 0
@@ -330,7 +359,7 @@ pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
     // 标题
     match is_heading(line) {
       Some(lv) => {
-        out.push(Heading(lv, parse_inline(heading_text(line))))
+        out.push(Heading(lv, inlines_of(heading_text(line), deferred~)))
         i = i + 1
         continue
       }
@@ -348,7 +377,7 @@ pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
         inner.push(strip_quote(lines[j]))
         j = j + 1
       }
-      out.push(Quote(parse_blocks(inner)))
+      out.push(Quote(parse_blocks_impl(inner, deferred~)))
       i = j
       continue
     }
@@ -367,10 +396,10 @@ pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
     // 表格
     if i + 1 < n && is_table_row(line) && is_table_sep(lines[i + 1]) {
       let rows : Array[Array[Array[Inline]]] = []
-      rows.push(cells_row(split_cells(line)))
+      rows.push(cells_row(split_cells(line), deferred~))
       let mut j = i + 2
       while j < n && is_table_row(lines[j]) && !is_block_start(lines[j]) {
-        rows.push(cells_row(split_cells(lines[j])))
+        rows.push(cells_row(split_cells(lines[j]), deferred~))
         j = j + 1
       }
       out.push(TableBlock(Table::{ rows, has_header: true }))
@@ -379,7 +408,7 @@ pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
     }
     // 列表
     if parse_marker(line) is Some(_) {
-      let (list, next) = parse_list(lines, i)
+      let (list, next) = parse_list(lines, i, deferred~)
       out.push(list)
       i = next
       continue
@@ -403,7 +432,9 @@ pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
       j = i + 1
     }
     out.push(
-      Paragraph(parse_inline(replace_all_str(join_lines_str(body), "\n", " "))),
+      Paragraph(
+        inlines_of(replace_all_str(join_lines_str(body), "\n", " "), deferred~),
+      ),
     )
     i = j
   }
@@ -413,10 +444,10 @@ pub fn parse_blocks(lines : Array[String]) -> Array[Block] {
 // 一行表格 → 每格一组 inline
 
 ///|
-fn cells_row(cells : Array[String]) -> Array[Array[Inline]] {
+fn cells_row(cells : Array[String], deferred~ : Bool) -> Array[Array[Inline]] {
   let out : Array[Array[Inline]] = []
   for c in cells {
-    out.push(parse_inline(c))
+    out.push(inlines_of(c, deferred~))
   }
   out
 }
@@ -479,7 +510,7 @@ fn marker_same_list(a : Marker, b : Marker) -> Bool {
 }
 
 ///|
-fn parse_list(lines : Array[String], start : Int) -> (Block, Int) {
+fn parse_list(lines : Array[String], start : Int, deferred~ : Bool) -> (Block, Int) {
   let n = lines.length()
   let first_m = match parse_marker(lines[start]) {
     Some(m) => m
@@ -554,14 +585,15 @@ fn parse_list(lines : Array[String], start : Int) -> (Block, Int) {
           }
         }
         let children = if tail.length() > 0 {
-          parse_blocks(dedent(tail, base + 2))
+          parse_blocks_impl(dedent(tail, base + 2), deferred~)
         } else {
           []
         }
         items.push(Item::{
           checked: m.checked,
-          content: parse_inline(
+          content: inlines_of(
             replace_all_str(join_lines_str(content_text), "\n", " "),
+            deferred~,
           ),
           children,
         })

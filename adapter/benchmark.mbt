@@ -116,6 +116,7 @@ extern "C" fn gpui_run_window_benchmark_ffi(
   target : Int,
   stride : Float,
   document_load_ms : Double,
+  moon_started_epoch_ms : Double,
 ) -> Int = "gpui_run_window_benchmark"
 
 ///|
@@ -137,6 +138,7 @@ pub fn run_ui_benchmark(
   source : String,
   scenario : String,
   document_load_ms : Double,
+  moon_started_epoch_ms : Double,
 ) -> Unit {
   load(source)
   @gpui.expect_ok(build_tree(0), "ui-benchmark initial build_tree")
@@ -162,6 +164,7 @@ pub fn run_ui_benchmark(
     target,
     BENCHMARK_SCROLL_STRIDE,
     document_load_ms,
+    moon_started_epoch_ms,
   )
   // 成功时 macOS 上 quit 直接终止进程（不可达）；返回 0 是正常完成路径。
   if status == 0 {

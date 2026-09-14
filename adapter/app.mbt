@@ -44,6 +44,10 @@ fn bump_sel() -> Unit {
 /// 机制不变。
 const WINDOW_PAD : Float = 256.0
 
+// 窗口激活的块级 pad：单步光标移动（方向键）可能越出可视窗口一块，
+// 目标块必须已激活，否则 caret 偏移落在原文空间。8 块 ≈ 数屏行程。
+const WINDOW_ACTIVATE_PAD : Int = 8
+
 ///|
 let viewport_h : Ref[Float] = { val: 800.0 }
 
@@ -184,9 +188,11 @@ fn compute_window(y : Float) -> (Int, Int) {
 
 ///|
 /// 载入文档（demo 启动 / 打开文件）。切换文档即新会话：undo 历史、
-/// 关联文件一并复位。
+/// 关联文件一并复位。打开走延迟解析：叶子内容以 plain-Run 承载原文，
+/// 渲染窗口内的块由 rebuild 激活（Block::activate），大文档打开只付
+/// 结构扫描的成本。
 pub fn load(src : String) -> Unit {
-  ed.blocks = @core.doc_ensure(@core.parse_doc(src))
+  ed.blocks = @core.doc_ensure(@core.parse_doc_deferred(src))
   ed.sel = @core.collapsed_sel(@core.Caret::{ unit: 0, offset: 0 })
   ed.undo_stack.clear()
   ed.redo_stack.clear()
@@ -996,6 +1002,13 @@ pub fn rebuild(view : Int) -> Result[Unit, Int] {
   let (lo, hi) = compute_window(scroll_y.val)
   win_lo.val = lo
   win_hi.val = hi
+  // 激活可视窗口 ±pad 的块：窗口内渲染/命中/编辑都要求真实 run；
+  // pad 覆盖单步光标移动越窗的目标块。窗口外的块保持延迟形态。
+  let pad_lo = (lo - WINDOW_ACTIVATE_PAD).max(0)
+  let pad_hi = (hi + WINDOW_ACTIVATE_PAD).min(n)
+  for i = pad_lo; i < pad_hi; i = i + 1 {
+    ed.blocks[i] = ed.blocks[i].activate()
+  }
   let cum = cache_cum.val
   let cb = @gpui.CommandBuffer::new()
   cb.div() // root：承载顶栏与滚动容器

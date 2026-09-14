@@ -926,7 +926,7 @@ fn text_rows_scan_str(
         acc.rows = acc.rows + 1
         acc.row_w = cw
       } else {
-        acc.row_w = acc.row_w + word_total + cw
+        acc.row_w = acc.row_w + word_total
       }
       acc.word_w = 0.0
     } else {

@@ -38,6 +38,9 @@ fn check(needle : String, hay : String) -> Unit {
 fn main {
   @nakake/gpui-bindings.register_dispatch(@mdmbt/adapter.dispatch)
   @mdmbt/adapter.load(@mdmbt/adapter.demo_sample())
+  // 自检的 dump 断言覆盖整个演示文档；视口拉高到全覆盖，避免断言
+  // 依赖估算高度的窗口边界（估高模型调整时不再脆弱）。
+  @mdmbt/adapter.set_viewport_height(2000.0)
   @nakake/gpui-bindings.expect_ok(
     @mdmbt/adapter.build_tree(0),
     "initial build_tree",

@@ -889,12 +889,93 @@ fn line_h(size : Float) -> Float {
 }
 
 ///|
+/// 逐块行数估算的累计状态：高度缓存对全文档每块调用 text_rows，
+/// plain 字符串 / Char 数组 / token·行数组三层分配是大文档打开时
+/// MoonBit 侧的主要成本，这里全部消除。
+priv struct TextRowsAcc {
+  mut rows : Int
+  mut row_w : Float
+  mut word_w : Float
+}
+
+///|
+/// 无分配的贪心换行扫描：与 layout_text 相同的 char_w 宽度模型，
+/// 词间优先断行，超宽单词按宽度折行（近似 layout_text 的逐字符
+/// 分裂）。结果在估高既有的 ±10% 容差内。
+fn text_rows_scan_str(
+  s : String,
+  size : Float,
+  avail : Float,
+  acc : TextRowsAcc,
+) -> Unit {
+  for ch in s {
+    let cw = char_w(ch) * size
+    if ch == ' ' {
+      let word_total = acc.word_w + cw
+      if acc.row_w > 0.0 && acc.row_w + word_total > avail {
+        acc.rows = acc.rows + 1
+        acc.row_w = word_total
+      } else {
+        acc.row_w = acc.row_w + word_total
+      }
+      acc.word_w = 0.0
+    } else if is_wide(ch) {
+      // 宽字符（CJK）自成断行机会
+      let word_total = acc.word_w + cw
+      if acc.row_w > 0.0 && acc.row_w + word_total > avail {
+        acc.rows = acc.rows + 1
+        acc.row_w = cw
+      } else {
+        acc.row_w = acc.row_w + word_total + cw
+      }
+      acc.word_w = 0.0
+    } else {
+      acc.word_w = acc.word_w + cw
+      if acc.word_w >= avail {
+        // 超宽单词按整行宽度折行，残余另起一行
+        let full = (acc.word_w / avail).floor()
+        acc.rows = acc.rows + full.to_int()
+        acc.word_w = acc.word_w - full * avail
+        acc.rows = acc.rows + 1
+        acc.row_w = acc.word_w
+        acc.word_w = 0.0
+      }
+    }
+  }
+}
+
+///|
 fn text_rows(ns : Array[@core.Inline], size : Float, avail : Float) -> Int {
-  let n = layout_text(@core.inlines_plain(ns).to_array(), size, avail).rows.length()
-  if n == 0 {
+  let acc : TextRowsAcc = { rows: 1, row_w: 0.0, word_w: 0.0 }
+  for n in ns {
+    match n {
+      @core.Run(s, _) => text_rows_scan_str(s, size, avail, acc)
+      @core.Link(_, inner) =>
+        for x in inner {
+          match x {
+            @core.Run(s, _) => text_rows_scan_str(s, size, avail, acc)
+            // Link 内层不再嵌链接；图片/脚注按源文形态计入（罕见）
+            other =>
+              text_rows_scan_str(
+                @core.inline_plain(other),
+                size,
+                avail,
+                acc,
+              )
+          }
+        }
+      @core.Image(alt, url) =>
+        text_rows_scan_str("![" + alt + "](" + url + ")", size, avail, acc)
+      @core.Footnote(nm) => text_rows_scan_str("[^\{nm}]", size, avail, acc)
+    }
+  }
+  if acc.row_w + acc.word_w > avail && acc.row_w > 0.0 {
+    acc.rows = acc.rows + 1
+  }
+  if acc.rows < 1 {
     1
   } else {
-    n
+    acc.rows
   }
 }
 
@@ -1022,7 +1103,22 @@ fn estimate_block_height(b : @core.Block, avail : Float) -> Float {
       Float::from_int(text_rows(inls, 15.0, avail)) * line_h(15.0)
     @core.CodeBlock(lang, code) => {
       let label : Float = if lang != "" { line_h(11.0) } else { 0.0 }
-      let lines = @core.split_lines_str(code).length()
+      // 无分配计行：split_lines_str 仅为数行数会物化整段代码的行数组
+      let lines = if code == "" {
+        0
+      } else {
+        let mut nl = 1
+        for ch in code {
+          if ch == '\n' {
+            nl = nl + 1
+          }
+        }
+        if code.has_suffix("\n") {
+          nl - 1
+        } else {
+          nl
+        }
+      }
       let body : Float = if lines == 0 {
         22.0
       } else {
